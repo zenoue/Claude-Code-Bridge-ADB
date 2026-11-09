@@ -3,8 +3,7 @@
 ## Điều khiển điện thoại Android qua cầu nối
 
 Điện thoại chạy app trong repo này. `tools/bridge.py` gửi lệnh `adb shell` qua đường hầm
-(`BRIDGE_URL` + `BRIDGE_PASSWORD`, lấy từ nút *Sao chép cho Claude Code* trong app) hoặc qua Supabase
-(`BRIDGE_SUPABASE_URL` + `BRIDGE_SUPABASE_KEY` + `BRIDGE_PASSWORD`).
+(`BRIDGE_URL` + `BRIDGE_PASSWORD`, lấy từ nút *Sao chép cho Claude Code* trong app).
 
 ```bash
 python3 tools/bridge.py ping                       # luôn ping trước

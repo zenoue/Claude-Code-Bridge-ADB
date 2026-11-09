@@ -2,7 +2,7 @@ package com.zenoue.ccbridge
 
 /**
  * Cửa sổ lệnh dùng chung cho tab CLI: lệnh gõ tay và lệnh Claude Code gửi đến
- * (qua Supabase) cùng hiện ở đây, kèm kết quả.
+ * (qua đường hầm) cùng hiện ở đây, kèm kết quả.
  *
  * Mỗi dòng có id tăng dần để UI chỉ vẽ thêm phần mới, kể cả khi bộ đệm đã xoá bớt dòng cũ.
  */

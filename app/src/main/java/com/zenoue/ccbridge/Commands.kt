@@ -7,15 +7,15 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 
 /**
- * Xử lý lệnh (đã kiểm chữ ký) từ Claude Code – dùng chung cho đường hầm và Supabase.
+ * Xử lý lệnh (đã kiểm chữ ký) Claude Code gửi qua đường hầm.
  * Lệnh và kết quả cũng hiện trong tab CLI.
  */
 object Commands {
 
-    fun run(ctx: Context, cfg: Config, type: String, cmd: String, timeoutMs: Long, via: String): HttpApi.Reply {
+    fun run(ctx: Context, cfg: Config, type: String, cmd: String, timeoutMs: Long): HttpApi.Reply {
         return when (type) {
             "ping" -> {
-                Console.info("claude ping ($via)")
+                Console.info("claude ping")
                 HttpApi.Reply(0, "pong · ADB=${Adb.isConnected(ctx)} · ${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE} · chỉ-đọc=${!cfg.allowWrite}")
             }
             "logcat_start" -> {

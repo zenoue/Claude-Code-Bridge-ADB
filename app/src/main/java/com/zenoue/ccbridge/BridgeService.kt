@@ -13,17 +13,14 @@ import android.os.IBinder
 import android.os.PowerManager
 
 /**
- * Dịch vụ nền của cầu nối. Hai kênh nhận lệnh (đều phải ký HMAC bằng mật khẩu):
- *  - Đường hầm: HTTP 127.0.0.1:<port> + đường hầm SSH ra URL https công khai (mặc định).
- *  - Supabase: hỏi vòng bảng mailbox (tuỳ chọn).
+ * Dịch vụ nền: server HTTP 127.0.0.1:<port> + đường hầm SSH ra URL https công khai.
+ * Claude Code gửi lệnh đã ký HMAC vào URL đó; lệnh chạy qua ADB nội bộ.
  */
 class BridgeService : Service() {
 
     companion object {
         private const val CHANNEL = "bridge"
         private const val NOTIF_ID = 11
-        private const val CHUNK = 60_000
-        private const val POLL_MS = 1500L
         @Volatile var running = false; private set
         @Volatile var status = "Chưa chạy"; private set
         @Volatile var tunnelUrl: String? = null; private set
@@ -51,7 +48,7 @@ class BridgeService : Service() {
         if (Build.VERSION.SDK_INT >= 34) startForeground(NOTIF_ID, notif("Đang khởi động…"), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         else startForeground(NOTIF_ID, notif("Đang khởi động…"))
         alive = true; running = true
-        // giữ CPU khi tắt màn hình để đường hầm/hỏi vòng không bị ngủ
+        // giữ CPU khi tắt màn hình để đường hầm không bị ngủ
         wake = getSystemService(PowerManager::class.java)
             ?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "ccbridge:bridge")?.apply { setReferenceCounted(false); acquire() }
         worker = Thread { loop() }.apply { isDaemon = true; name = "bridge"; start() }
@@ -81,52 +78,29 @@ class BridgeService : Service() {
 
     private fun loop() {
         val cfg = Config(this)
-        if (!cfg.ready) { setStatus("Thiếu cấu hình"); stopSelf(); return }
+        if (!cfg.ready) { setStatus("Thiếu mật khẩu"); stopSelf(); return }
         tryConnectAdb(cfg)
-        if (cfg.tunnelEnabled) startTunnel(cfg)
-        val sb = if (cfg.supabaseEnabled && cfg.supabaseReady) cfg.bridge() else null
-        if (sb != null) {
-            sb.check()?.let { Console.err("Supabase: $it") } ?: Console.info("Supabase đã bật – chờ lệnh từ Claude Code")
-        }
-        var lastFlush = 0L
-        var logCursor = LogStream.lastId()
+        if (!startTunnel(cfg)) { stopSelf(); return }
         while (alive) {
             try {
                 if (!Adb.isConnected(this)) tryConnectAdb(cfg)
-                if (sb != null) {
-                    for (c in sb.pollCommands(cfg.lastSeq)) handleSupabase(cfg, sb, c)
-                    val now = System.currentTimeMillis()
-                    if (LogStream.running && now - lastFlush > 1200) {
-                        val (next, lines) = LogStream.since(logCursor)
-                        logCursor = next
-                        if (lines.isNotEmpty()) flushLog(sb, lines)
-                        lastFlush = now
-                    }
-                }
-                refreshStatus(cfg, sb != null)
+                val adb = if (Adb.isConnected(this)) "ADB ✓" else "ADB chưa kết nối"
+                setStatus((if (tunnelUrl != null) "Đường hầm ✓" else "Đang mở đường hầm…") + " · " + adb)
             } catch (t: Throwable) {
                 Console.err("Lỗi vòng lặp: ${t.message}")
             }
-            try { Thread.sleep(POLL_MS) } catch (_: InterruptedException) { break }
+            try { Thread.sleep(3000) } catch (_: InterruptedException) { break }
         }
     }
 
-    private fun refreshStatus(cfg: Config, supa: Boolean) {
-        val adb = if (Adb.isConnected(this)) "ADB ✓" else "ADB chưa kết nối"
-        val parts = ArrayList<String>()
-        if (cfg.tunnelEnabled) parts.add(if (tunnelUrl != null) "Đường hầm ✓" else "Đường hầm…")
-        if (supa) parts.add("Supabase ✓")
-        setStatus((parts + adb).joinToString(" · "))
-    }
-
-    // ───────── đường hầm ─────────
-
-    private fun startTunnel(cfg: Config) {
-        val api = HttpApi({ cfg.password }, { type, cmd, t -> Commands.run(this, cfg, type, cmd, t, "đường hầm") })
+    private fun startTunnel(cfg: Config): Boolean {
+        val api = HttpApi({ cfg.password }, { type, cmd, t -> Commands.run(this, cfg, type, cmd, t) })
         try {
             server = LocalServer(cfg.httpPort, api::handle).also { it.start() }
         } catch (t: Throwable) {
-            Console.err("Không mở được cổng ${cfg.httpPort}: ${t.message}"); return
+            Console.err("Không mở được cổng ${cfg.httpPort}: ${t.message}")
+            setStatus("Lỗi cổng ${cfg.httpPort}")
+            return false
         }
         val p = Tunnel.Provider.of(cfg.provider)
         tunnel = Tunnel(p, cfg.httpPort, cfg.sshKey) { st, url ->
@@ -136,32 +110,7 @@ class BridgeService : Service() {
             else if (url == null && st.startsWith("Lỗi")) Console.err(st)
             onStatus?.invoke()
         }.also { it.start() }
-    }
-
-    // ───────── Supabase ─────────
-
-    private fun handleSupabase(cfg: Config, sb: SupabaseBridge, c: SupabaseBridge.Cmd) {
-        if (c.seq <= cfg.lastSeq) return
-        cfg.lastSeq = c.seq
-        if (!Crypto.verify(cfg.password, c.seq, c.ts, c.type, c.cmd, c.nonce, c.sig)) {
-            sb.insertResult(c.seq, 1, 1, -2, "Chữ ký không khớp – sai mật khẩu.")
-            Console.err("#${c.seq} từ chối: sai mật khẩu"); return
-        }
-        if (c.ts in 1..(System.currentTimeMillis() - 600_000)) { Console.err("#${c.seq} bỏ: quá cũ"); return }
-        val r = Commands.run(this, cfg, c.type, c.cmd, 300_000L, "Supabase")
-        val chunks = if (r.output.isEmpty()) listOf("") else r.output.chunked(CHUNK)
-        for ((i, part) in chunks.withIndex()) {
-            if (!sb.insertResult(c.seq, i + 1, chunks.size, r.exit, part)) Console.err("Ghi kết quả #${c.seq} phần ${i + 1} lỗi")
-        }
-    }
-
-    private fun flushLog(sb: SupabaseBridge, lines: List<String>) {
-        var buf = StringBuilder()
-        for (l in lines) {
-            if (buf.length + l.length + 1 > CHUNK) { sb.insertLog(buf.toString()); buf = StringBuilder() }
-            buf.append(l).append('\n')
-        }
-        if (buf.isNotEmpty()) sb.insertLog(buf.toString())
+        return true
     }
 
     // ───────── notification ─────────

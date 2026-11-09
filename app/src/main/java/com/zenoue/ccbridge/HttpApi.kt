@@ -9,7 +9,7 @@ import org.json.JSONObject
  *  POST /cmd    -> body JSON {seq, ts, type, cmd, nonce, sig, timeout?}
  *                  trả {seq, exit, output, next?}
  *
- * Mỗi lệnh phải ký HMAC bằng mật khẩu (giống chế độ Supabase), nên mật khẩu không bao giờ đi qua đường hầm.
+ * Mỗi lệnh phải ký HMAC bằng mật khẩu, nên mật khẩu không bao giờ đi qua đường hầm.
  * Chống phát lại: ts lệch tối đa [MAX_SKEW_MS] và mỗi nonce chỉ dùng một lần.
  */
 class HttpApi(
