@@ -1,0 +1,70 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # cần lịch sử + tag để viết ghi chú update
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Unit test
+        run: ./gradlew --no-daemon testDebugUnitTest
+
+      - name: Build APK
+        run: ./gradlew --no-daemon assembleDebug
+
+      - name: Rename APK
+        run: |
+          mkdir -p out
+          cp app/build/outputs/apk/debug/app-debug.apk "out/CCBridgeADB-v1.0.${{ github.run_number }}.apk"
+
+      # Ghi chú vắn tắt: tiêu đề các commit kể từ bản phát hành trước.
+      - name: Release notes
+        run: |
+          PREV=$(git tag --list 'v1.0.*' --sort=-v:refname | head -n1)
+          {
+            echo "## Cập nhật"
+            if [ -n "$PREV" ]; then
+              git log --no-merges --pretty='- %s' "$PREV..HEAD"
+            else
+              git log --no-merges --pretty='- %s' -n 20
+            fi
+            echo
+            echo "Tải file \`.apk\` bên dưới về điện thoại và cài (cài đè được bản cũ)."
+          } > notes.md
+          cat notes.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CCBridgeADB-apk
+          path: out/*.apk
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: v1.0.${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          body_path: notes.md
+          files: out/*.apk
