@@ -3,8 +3,6 @@ package com.zenoue.ccbridge.feature
 import android.content.Context
 import android.os.Build
 import io.github.muntashirakon.adb.AdbStream
-import java.io.BufferedReader
-import java.io.InputStreamReader
 
 /**
  * Xử lý lệnh (đã kiểm chữ ký) Claude Code gửi qua đường hầm.
@@ -43,9 +41,7 @@ object Commands {
         Console.cmdRemote(cmd)
         if (!cfg.allowWrite && !Policy.allowed(cmd)) return blocked()
         if (!Adb.isConnected(ctx)) return noAdb()
-        val r = try { Adb.run(ctx, cmd, timeoutMs) } catch (t: Throwable) {
-            Adb.disconnect(ctx); Adb.Result(-1, t.toString(), "ADB")
-        }
+        val r = try { Adb.run(ctx, cmd, timeoutMs) } catch (t: Throwable) { Adb.onCommandError(ctx, t) }
         Console.out(r.output.ifBlank { "(không có output)" })
         if (r.exit != 0) Console.err("exit ${r.exit}")
         return HttpApi.Reply(r.exit, r.output)
@@ -78,14 +74,19 @@ object LogStream {
         val st = Adb.openShell(ctx, cmd)
         stream = st
         Thread {
+            val pending = java.io.ByteArrayOutputStream()
             try {
-                BufferedReader(InputStreamReader(st.openInputStream())).use { r ->
-                    while (stream === st) {
-                        val line = r.readLine() ?: break
-                        synchronized(buf) {
-                            buf.addLast(nextId++ to line)
-                            while (buf.size > MAX) buf.removeFirst()
-                        }
+                Adb.pump(st, stop = { stream !== st }) { b, n ->
+                    for (i in 0 until n) {
+                        val c = b[i]
+                        if (c == '\n'.code.toByte()) {
+                            val line = pending.toString("UTF-8").removeSuffix("\r")
+                            pending.reset()
+                            synchronized(buf) {
+                                buf.addLast(nextId++ to line)
+                                while (buf.size > MAX) buf.removeFirst()
+                            }
+                        } else pending.write(c.toInt())
                     }
                 }
             } catch (_: Throwable) { }

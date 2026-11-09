@@ -8,10 +8,8 @@ import org.bouncycastle.asn1.x500.X500Name
 import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter
 import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder
-import java.io.BufferedReader
 import java.io.ByteArrayInputStream
 import java.io.File
-import java.io.InputStreamReader
 import java.math.BigInteger
 import java.security.KeyFactory
 import java.security.KeyPairGenerator
@@ -110,6 +108,13 @@ object Adb {
         connected
     } catch (t: Throwable) { lastError = t.message ?: t.toString(); connected = false; false }
 
+    /** Lệnh lỗi: chỉ ngắt ADB khi kết nối thật sự đã chết (lỗi của một stream không làm rớt cả kết nối). */
+    fun onCommandError(ctx: Context, t: Throwable): Result {
+        val alive = try { AdbManager.get(ctx).isConnected } catch (_: Throwable) { false }
+        if (!alive) disconnect(ctx)
+        return Result(-1, (if (alive) "" else "ADB mất kết nối: ") + (t.message ?: t.toString()), "ADB")
+    }
+
     fun disconnect(ctx: Context) {
         try { AdbManager.get(ctx).disconnect() } catch (_: Throwable) { }
         connected = false; mode = ""
@@ -132,11 +137,7 @@ object Adb {
 
     private fun restartService(ctx: Context, service: String): String {
         val st = AdbManager.get(ctx).openStream(service)
-        val killer = timer.schedule({ try { st.close() } catch (_: Throwable) { } }, 5, java.util.concurrent.TimeUnit.SECONDS)
-        val msg = try {
-            st.openInputStream().bufferedReader().readText().trim()
-        } catch (_: Throwable) { "" } finally {
-            killer.cancel(false)
+        val msg = try { readAll(st, 5_000).trim() } catch (_: Throwable) { "" } finally {
             try { st.close() } catch (_: Throwable) { }
         }
         disconnect(ctx)
@@ -153,47 +154,87 @@ object Adb {
         return false
     }
 
-    /** Mở `adb shell <cmd>` và trả stream để đọc dần (dùng cho logcat). */
+    /** Mở `adb shell <cmd>` và trả stream để đọc dần (dùng cho logcat). Lệnh được bọc base64 ([wrap]). */
     fun openShell(ctx: Context, cmd: String): AdbStream =
-        AdbManager.get(ctx).openStream("shell:$cmd")
+        AdbManager.get(ctx).openStream("shell:" + wrap(cmd))
 
     private const val EXIT_MARK = "__CCB_EXIT__="
 
     /**
-     * Chạy lệnh rồi trả toàn bộ output kèm exit code thật.
-     * Lệnh được nối thêm một dòng `echo marker$?` (xuống dòng để không dính vào comment/`&` của lệnh).
+     * Bọc lệnh: `sh -c "$(echo <base64> | base64 -d)"`.
+     *  - libadb cấp bộ đệm lệnh theo số ký tự nhưng ghi số byte UTF‑8 -> lệnh có chữ Việt/emoji gây
+     *    BufferOverflowException. Base64 chỉ có ASCII.
+     *  - Chạy trong `sh -c` riêng nên `exit N`, comment `#`, `&`, dấu nháy… không phá phần đánh dấu exit code.
      */
-    private val timer = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r ->
-        Thread(r, "adb-timeout").apply { isDaemon = true }
+    fun wrap(cmd: String): String {
+        val b64 = android.util.Base64.encodeToString(cmd.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
+        return "sh -c \"\$(echo $b64 | base64 -d)\""
     }
 
-    /** [timeoutMs] > 0: quá giờ thì đóng stream, trả phần output đã có với exit 124. */
-    fun run(ctx: Context, cmd: String, timeoutMs: Long = 0, maxLen: Int = 8 * 1024 * 1024): Result {
-        val stream = openShell(ctx, "$cmd\necho $EXIT_MARK$?")
-        val timedOut = java.util.concurrent.atomic.AtomicBoolean(false)
-        val killer = if (timeoutMs > 0) timer.schedule({
-            timedOut.set(true); try { stream.close() } catch (_: Throwable) { }
-        }, timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS) else null
-        val sb = StringBuilder()
-        var cut = false
-        try {
-            BufferedReader(InputStreamReader(stream.openInputStream())).use { r ->
-                val buf = CharArray(16 * 1024)
-                while (true) {
-                    val n = try { r.read(buf) } catch (t: Throwable) { if (timedOut.get()) -1 else throw t }
-                    if (n < 0) break
-                    if (sb.length < maxLen) sb.appendRange(buf, 0, n) else cut = true
-                }
+    private val pendingCloseField = runCatching {
+        AdbStream::class.java.getDeclaredField("mPendingClose").apply { isAccessible = true }
+    }.getOrNull()
+
+    private fun pendingClose(st: AdbStream): Boolean =
+        try { pendingCloseField?.getBoolean(st) == true } catch (_: Throwable) { false }
+
+    /**
+     * Đọc AdbStream an toàn, tránh hai lỗi của libadb (AdbStream.read):
+     *  - stream bị adbd đóng khi hàng đợi rỗng -> ném IOException("Stream closed.") thay vì EOF;
+     *  - adbd đóng khi còn dữ liệu -> đọc hết rồi `read()` chờ vĩnh viễn.
+     * Chỉ gọi read() khi available() > 0, còn lại tự kiểm tra trạng thái đóng.
+     * Trả true = hết stream, false = quá [deadlineMs] (0 = không giới hạn) hoặc [stop] trả true.
+     */
+    fun pump(st: AdbStream, deadlineMs: Long = 0, stop: () -> Boolean = { false }, sink: (ByteArray, Int) -> Unit): Boolean {
+        val buf = ByteArray(64 * 1024)
+        var idle = 1L
+        while (true) {
+            val avail = try { st.available() } catch (_: java.io.IOException) { return true }
+            if (avail > 0) {
+                val n = try { st.read(buf, 0, buf.size) } catch (_: java.io.IOException) { return true }
+                if (n < 0) return true
+                if (n > 0) sink(buf, n)
+                idle = 1
+                continue
             }
+            if (st.isClosed || pendingClose(st)) {
+                val left = try { st.available() } catch (_: java.io.IOException) { 0 }
+                if (left == 0) return true else continue
+            }
+            if (stop()) return false
+            if (deadlineMs > 0 && System.currentTimeMillis() > deadlineMs) return false
+            try { Thread.sleep(idle) } catch (_: InterruptedException) { return false }
+            idle = (idle * 2).coerceAtMost(20)
+        }
+    }
+
+    /** Đọc hết stream thành chuỗi UTF‑8 (dùng cho service ngắn như tcpip:/usb:). */
+    fun readAll(st: AdbStream, timeoutMs: Long): String {
+        val out = java.io.ByteArrayOutputStream()
+        pump(st, System.currentTimeMillis() + timeoutMs) { b, n -> out.write(b, 0, n) }
+        return out.toString("UTF-8")
+    }
+
+    /**
+     * Chạy lệnh rồi trả toàn bộ output kèm exit code thật (nối `echo marker$?` sau lệnh đã bọc).
+     * [timeoutMs] > 0: quá giờ thì đóng stream, trả phần output đã có với exit 124.
+     */
+    fun run(ctx: Context, cmd: String, timeoutMs: Long = 0, maxLen: Int = 8 * 1024 * 1024): Result {
+        val stream = AdbManager.get(ctx).openStream("shell:" + wrap(cmd) + "; echo $EXIT_MARK\$?")
+        val out = java.io.ByteArrayOutputStream()
+        var cut = false
+        val deadline = if (timeoutMs > 0) System.currentTimeMillis() + timeoutMs else 0L
+        val finished = try {
+            pump(stream, deadline) { b, n -> if (out.size() < maxLen) out.write(b, 0, n) else cut = true }
         } finally {
-            killer?.cancel(false)
             try { stream.close() } catch (_: Throwable) { }
         }
-        if (timedOut.get()) {
-            return Result(124, sb.toString() + "\n…(hết thời gian ${timeoutMs / 1000}s, đã dừng lệnh)", "ADB (shell)")
+        val text = out.toString("UTF-8")
+        if (!finished) {
+            return Result(124, text + "\n…(hết thời gian ${timeoutMs / 1000}s, đã dừng lệnh)", "ADB (shell)")
         }
-        val (exit, out) = splitExit(sb.toString())
-        return Result(exit, if (cut) "$out\n…(đã cắt bớt)" else out, "ADB (shell)")
+        val (exit, body) = splitExit(text)
+        return Result(exit, if (cut) "$body\n…(đã cắt bớt)" else body, "ADB (shell)")
     }
 
     /** Tách dòng `marker<exit>` cuối output. Không thấy marker -> exit 0, giữ nguyên output. */

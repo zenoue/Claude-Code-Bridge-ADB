@@ -293,7 +293,7 @@ class MainScreen(private val activity: Activity) : ContextWrapper(activity), Act
             Console.err("Bị chặn ở chế độ chỉ-đọc (bật \"Cho phép mọi lệnh\" ở tab Connect)"); return
         }
         io.execute {
-            val r = try { Adb.run(this, cmd, 120_000) } catch (t: Throwable) { Adb.disconnect(this); Adb.Result(-1, t.toString(), "ADB") }
+            val r = try { Adb.run(this, cmd, 120_000) } catch (t: Throwable) { Adb.onCommandError(this, t) }
             Console.out(r.output.ifBlank { "(không có output)" })
             if (r.exit != 0) Console.err("exit ${r.exit}")
             main.post { refreshStatus() }
