@@ -1,8 +1,18 @@
 name: Build APK
 
+# Chỉ build APK + tạo release khi phần vỏ APK đổi (app/, api/, cấu hình Gradle) hoặc bấm chạy tay.
+# Đổi code chức năng (feature/) -> workflow "Live update" lo, không tạo release.
 on:
   push:
     branches: [main_1]
+    paths:
+      - 'app/**'
+      - 'api/**'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'gradle.properties'
+      - 'gradle/**'
+      - '.github/workflows/build-apk.yml'
   workflow_dispatch:
 
 permissions:
@@ -18,7 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # cần lịch sử + tag để viết ghi chú update
+          fetch-depth: 0   # cần lịch sử + tag để viết ghi chú, số commit làm phiên bản chức năng
 
       - uses: actions/setup-java@v4
         with:
@@ -27,19 +37,23 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      - name: Version
+        run: |
+          echo "FEATURE_VERSION=$(git rev-list --count HEAD)" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=v1.0.${{ github.run_number }}" >> "$GITHUB_ENV"
+
       - name: Unit test
         run: ./gradlew --no-daemon testDebugUnitTest
 
       - name: Build APK
         run: ./gradlew --no-daemon assembleDebug
 
-      # feature.dex + feature.json: app tải về qua releases/latest/download/feature.json để tự cập nhật chức năng
+      # feature.json/.dex đính kèm chỉ để APK cũ (≤ v1.0.8, đọc releases/latest) biết có bản mới
       - name: Collect files
         run: |
           mkdir -p out
           cp app/build/outputs/apk/debug/app-debug.apk "out/CCBridgeADB-v1.0.${{ github.run_number }}.apk"
           cp feature/build/outputs/feature/feature.dex feature/build/outputs/feature/feature.json out/
-          cat out/feature.json
 
       # Ghi chú vắn tắt: tiêu đề các commit kể từ bản phát hành trước.
       - name: Release notes
@@ -53,11 +67,8 @@ jobs:
               git log --no-merges --pretty='- %s' -n 20
             fi
             echo
-            if [ -n "$PREV" ] && git diff --quiet "$PREV" HEAD -- app api build.gradle.kts settings.gradle.kts gradle; then
-              echo "**Chỉ đổi chức năng** – app tự cập nhật (Connect → Cập nhật chức năng), không cần cài lại APK."
-            else
-              echo "**Có thay đổi phần vỏ APK** – tải file \`.apk\` bên dưới về điện thoại và cài (cài đè được bản cũ)."
-            fi
+            echo "Tải file \`.apk\` bên dưới về điện thoại và cài (cài đè được bản cũ). Kèm chức năng #$FEATURE_VERSION;"
+            echo "các bản chức năng sau tự cập nhật trong app (Connect → Cập nhật chức năng), không cần cài lại APK."
           } > notes.md
           cat notes.md
 

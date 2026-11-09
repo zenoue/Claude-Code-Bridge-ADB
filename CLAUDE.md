@@ -30,6 +30,9 @@ python3 tools/bridge.py exec "logcat -d -t 200 *:E"
   - `api/`: hợp đồng giữa hai bên (`Api.kt`). Đổi chữ ký nào → **tăng `API_VERSION`** (bản cũ sẽ báo cần APK mới).
 - Ưu tiên sửa trong `feature/`. Cần thư viện mới, quyền mới, tài nguyên mới → phải sửa `app/` (cần APK mới).
   `feature` chỉ `compileOnly` thư viện; thư viện đó phải có trong `app` (`implementation`).
-- Chỉ dùng nhánh `main_1`. Mỗi push → CI build APK + `feature.dex`/`feature.json`, release `v1.0.N`,
-  ghi chú = tiêu đề commit (viết ngắn gọn, mô tả cho người dùng) + dòng báo có cần cài APK hay không.
+- Chỉ dùng nhánh `main_1` (nhánh `live` do CI tạo, không sửa tay). Hai workflow tách riêng:
+  - **Live update** (push đổi `feature/` hoặc `api/`): build `feature.dex` → đẩy lên nhánh `live`, **không release**.
+    Phiên bản chức năng `#N` = số commit; ghi chú hiện trong app = tiêu đề commit.
+  - **Build APK** (push đổi `app/`, `api/`, cấu hình Gradle, hoặc chạy tay): build APK → release `v1.0.N`.
+  Viết tiêu đề commit ngắn gọn, mô tả thay đổi cho người dùng.
 - Test: `./gradlew testDebugUnitTest` (test nằm ở `feature/src/test`).

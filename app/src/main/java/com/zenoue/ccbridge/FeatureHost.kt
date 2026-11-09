@@ -24,8 +24,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Nạp và tự cập nhật feature.dex (toàn bộ chức năng của app) – phần vỏ APK không đổi.
  *
  *  - Bản đi kèm APK (assets/feature.dex) luôn có, dùng khi chưa tải gì hoặc bản tải về lỗi.
- *  - Bản mới lấy từ GitHub Releases: releases/latest/download/feature.json -> {version, api, sha256, tag}
- *    rồi tải releases/download/<tag>/feature.dex, kiểm SHA‑256, lưu read‑only (bắt buộc từ Android 14).
+ *  - Bản mới lấy từ nhánh `live` (CI đẩy lên mỗi khi code chức năng đổi, không tạo release):
+ *    raw.githubusercontent.com/<repo>/live/feature.json -> {version, api, sha256, file, notes}
+ *    rồi tải live/<file>, kiểm SHA‑256, lưu read‑only (bắt buộc từ Android 14).
  *  - Chỉ nạp bản có cùng [API_VERSION] với APK. Bản tải về gây crash -> đánh dấu hỏng, quay về bản đi kèm.
  *  - Lớp đã nạp không gỡ được khỏi tiến trình -> áp dụng bản mới = khởi động lại app ([applyUpdate]).
  */
@@ -33,6 +34,7 @@ object FeatureHost : HostApi {
     private const val CHECK_EVERY_MS = 30 * 60_000L
     private const val MIN_CHECK_GAP_MS = 10 * 60_000L
     private const val MAX_DEX = 16 * 1024 * 1024
+    private const val LIVE_BRANCH = "live"
 
     private lateinit var application: Application
     private lateinit var prefs: SharedPreferences
@@ -125,7 +127,7 @@ object FeatureHost : HostApi {
 
     private fun markBad(v: Int, t: Throwable?) {
         prefs.edit().putBoolean("bad_$v", true)
-            .putString("bad_reason", "v1.0.$v: ${t?.toString()?.take(300)}").commit()
+            .putString("bad_reason", "#$v: ${t?.toString()?.take(300)}").commit()
         File(dir, "github-$v.dex").delete()
     }
 
@@ -161,7 +163,7 @@ object FeatureHost : HostApi {
     private fun refreshPendingInfo() {
         val dl = prefs.getInt("dl_version", 0)
         if (dl > featureVersion && downloaded() != null) {
-            publish("downloaded", "Đã tải chức năng v1.0.$dl – khởi động lại để dùng", dl)
+            publish("downloaded", downloadedMessage(dl), dl)
         } else if (prefs.getString("bad_reason", null) != null && featureSource == "bundled" && dl > featureVersion) {
             publish("error", "Bản tải về bị lỗi, đang dùng bản đi kèm (${prefs.getString("bad_reason", "")})", 0)
         }
@@ -179,33 +181,44 @@ object FeatureHost : HostApi {
     }
 
     private fun doCheck() {
-        val meta = JSONObject(get("https://github.com/$repo/releases/latest/download/feature.json", 64 * 1024).decodeToString())
+        val base = "https://raw.githubusercontent.com/$repo/$LIVE_BRANCH/"
+        // ?t= để vượt cache CDN (~5 phút) của raw.githubusercontent.com
+        val meta = JSONObject(get(base + "feature.json?t=" + System.currentTimeMillis(), 64 * 1024).decodeToString())
         val v = meta.getInt("version")
         val api = meta.getInt("api")
         val now = System.currentTimeMillis()
         val have = maxOf(featureVersion, prefs.getInt("dl_version", 0).takeIf { downloaded() != null } ?: 0)
         when {
-            api != API_VERSION -> publish("need_apk",
-                "Có chức năng v1.0.$v nhưng cần APK mới (API $api, APK đang là API $API_VERSION) – tải APK ở Releases", checkedAt = now)
+            api > API_VERSION -> publish("need_apk",
+                "Có chức năng #$v nhưng cần APK mới (API $api, APK đang là API $API_VERSION) – tải APK ở Releases", checkedAt = now)
+            // bản live cũ hơn APK (API thấp hơn) -> không dùng được, bản đi kèm APK đã mới hơn
+            api < API_VERSION -> publish("uptodate", "Đang dùng bản mới nhất (#$featureVersion)", checkedAt = now)
             v <= have -> if (info.pending > 0) publish("downloaded", info.message, checkedAt = now)
-                else publish("uptodate", "Đang dùng bản mới nhất (v1.0.$featureVersion)", checkedAt = now)
-            isBad(v) -> publish("error", "Bản v1.0.$v bị lỗi trước đó – bỏ qua, chờ bản sau", checkedAt = now)
+                else publish("uptodate", "Đang dùng bản mới nhất (#$featureVersion)", checkedAt = now)
+            isBad(v) -> publish("error", "Bản #$v bị lỗi trước đó – bỏ qua, chờ bản sau", checkedAt = now)
             else -> {
-                publish("checking", "Đang tải chức năng v1.0.$v…")
-                val tag = meta.optString("tag", "v1.0.$v")
-                val bytes = get("https://github.com/$repo/releases/download/$tag/feature.dex", MAX_DEX)
+                publish("checking", "Đang tải chức năng #$v…")
+                val file = meta.optString("file", "feature-$v.dex")
+                if (!Regex("[A-Za-z0-9._-]+").matches(file)) throw IllegalStateException("tên file không hợp lệ: $file")
+                val bytes = get(base + file, MAX_DEX)
                 val sha = meta.getString("sha256")
                 if (sha256(bytes) != sha) throw IllegalStateException("SHA‑256 không khớp (bản phát hành đang cập nhật?)")
                 writeReadOnly(File(dir, "github-$v.dex"), bytes)
+                val notes = meta.optString("notes", "")
                 prefs.edit().putInt("dl_version", v).putInt("dl_api", api).putString("dl_sha", sha)
-                    .remove("bad_reason").commit()
+                    .putString("dl_notes", notes).remove("bad_reason").commit()
                 // dọn bản cũ (trừ bản đang chạy và bản vừa tải)
                 dir.listFiles { f -> f.name.startsWith("github-") }?.forEach {
                     if (it.name != "github-$v.dex" && it.name != "github-$featureVersion.dex") it.delete()
                 }
-                publish("downloaded", "Đã tải chức năng v1.0.$v – khởi động lại để dùng", v, now)
+                publish("downloaded", downloadedMessage(v), v, now)
             }
         }
+    }
+
+    private fun downloadedMessage(v: Int): String {
+        val notes = prefs.getString("dl_notes", "").orEmpty()
+        return "Đã tải chức năng #$v – khởi động lại để dùng" + if (notes.isNotBlank()) "\nMới: $notes" else ""
     }
 
     override fun applyUpdate(restartService: Boolean) {

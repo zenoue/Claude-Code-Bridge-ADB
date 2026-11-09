@@ -50,7 +50,7 @@ class MainActivity : Activity() {
             text = "Chức năng bị lỗi"; textSize = 20f; typeface = Typeface.DEFAULT_BOLD
         })
         col.addView(TextView(this).apply {
-            text = "Chức năng v1.0.${FeatureHost.featureVersion} (${FeatureHost.featureSource}) gặp lỗi:\n\n" +
+            text = "Chức năng #${FeatureHost.featureVersion} (${FeatureHost.featureSource}) gặp lỗi:\n\n" +
                 t.stackTraceToString().take(2500)
             textSize = 12f; typeface = Typeface.MONOSPACE; setTextIsSelectable(true)
         })

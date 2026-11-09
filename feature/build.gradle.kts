@@ -38,7 +38,15 @@ dependencies {
     testImplementation("org.json:json:20240303")
 }
 
-val featureVersion = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 0
+// Số phiên bản chức năng = số commit trên nhánh (CI đặt FEATURE_VERSION), chung cho bản live và bản đi kèm APK.
+val featureVersion = System.getenv("FEATURE_VERSION")?.toIntOrNull() ?: 0
+// Ghi chú = tiêu đề commit; đọc thẳng từ git dạng UTF‑8 (biến môi trường bị JVM giải mã theo locale -> lỗi dấu)
+val featureNotes = if (featureVersion <= 0) "" else runCatching {
+    val p = ProcessBuilder("git", "log", "-1", "--pretty=%s").directory(rootDir).start()
+    p.inputStream.readBytes().toString(Charsets.UTF_8).trim().also { p.waitFor() }
+}.getOrDefault("")
+// Chỉ khi build APK: tag release, để APK cũ (≤ v1.0.8, đọc releases/latest) tìm được feature.dex
+val releaseTag = System.getenv("RELEASE_TAG") ?: ""
 val featureOut = layout.buildDirectory.dir("outputs/feature")
 
 /** classes.jar của feature -> feature.dex (d8) + feature.json {version, api, sha256, size}. */
@@ -54,6 +62,8 @@ val featureDex = tasks.register("featureDex") {
     inputs.files(jarFiles)
     inputs.file(apiFile)
     inputs.property("version", featureVersion)
+    inputs.property("notes", featureNotes)
+    inputs.property("tag", releaseTag)
     outputs.dir(featureOut)
     doLast {
         val jar = jarFiles.get().files.single { it.name.endsWith(".jar") }
@@ -76,8 +86,11 @@ val featureDex = tasks.register("featureDex") {
         val bytes = dex.readBytes()
         val sha = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
         val api = Regex("const val API_VERSION = (\\d+)").find(apiFile.readText())!!.groupValues[1]
+        fun js(v: String) = "\"" + v.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ") + "\""
         File(out, "feature.json").writeText(
-            """{"version":$featureVersion,"api":$api,"sha256":"$sha","size":${bytes.size},"tag":"v1.0.$featureVersion"}""" + "\n"
+            """{"version":$featureVersion,"api":$api,"sha256":"$sha","size":${bytes.size},""" +
+                """"file":"feature-$featureVersion.dex","notes":${js(featureNotes)}""" +
+                (if (releaseTag.isNotEmpty()) ""","tag":${js(releaseTag)}""" else "") + "}\n"
         )
     }
 }

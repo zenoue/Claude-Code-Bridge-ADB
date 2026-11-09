@@ -17,7 +17,7 @@ object Commands {
             "ping" -> {
                 Console.info("claude ping")
                 HttpApi.Reply(0, "pong · ADB=${Adb.isConnected(ctx)}${if (Adb.connected) " (" + Adb.mode + ")" else ""} · ${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE} · chỉ-đọc=${!cfg.allowWrite}" +
-                    (if (Host.ready) " · chức năng v1.0.${Host.api.featureVersion} (${Host.api.featureSource})" else ""))
+                    (if (Host.ready) " · chức năng #${Host.api.featureVersion} (${Host.api.featureSource})" else ""))
             }
             "logcat_start" -> {
                 val lc = cmd.ifBlank { "logcat -v time" }

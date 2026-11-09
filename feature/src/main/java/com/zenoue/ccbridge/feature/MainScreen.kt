@@ -527,7 +527,7 @@ class MainScreen(private val activity: Activity) : ContextWrapper(activity), Act
         val h = Host.api
         val c = ui.card()
         c.addView(ui.title("Cập nhật chức năng"))
-        c.addView(ui.kv("Chức năng", "v1.0.${h.featureVersion} · " +
+        c.addView(ui.kv("Chức năng", "#${h.featureVersion} · " +
             if (h.featureSource == "github") "tải từ GitHub" else "đi kèm APK"))
         c.addView(ui.kv("APK", "v${h.apkVersion} · API ${h.apiVersion}", p.muted))
         updateLabel = ui.muted("").apply { setPadding(0, dp(4), 0, 0) }
@@ -540,7 +540,7 @@ class MainScreen(private val activity: Activity) : ContextWrapper(activity), Act
         if (h.featureSource == "github") c.addView(ui.button("Quay về bản đi kèm APK", primary = false) {
             h.resetToBundled(); toast("Sẽ dùng bản đi kèm APK sau khi khởi động lại"); refreshUpdate()
         })
-        c.addView(ui.muted("Code chức năng (giao diện, ADB, đường hầm) tự tải từ GitHub Releases khi có bản mới – " +
+        c.addView(ui.muted("Code chức năng (giao diện, ADB, đường hầm) tự tải từ GitHub (nhánh live) khi có bản mới – " +
             "không cần cài lại APK. Chỉ khi đổi phần vỏ APK mới cần cài APK. " +
             "Sau khi khởi động lại, địa chỉ đường hầm có thể đổi."))
         refreshUpdate()

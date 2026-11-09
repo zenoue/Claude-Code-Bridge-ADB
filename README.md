@@ -24,12 +24,16 @@ lấy từ [zenoue/Debug_unroot](https://github.com/zenoue/Debug_unroot).
 Toàn bộ chức năng (giao diện, ADB không dây, đường hầm, lệnh) nằm trong `feature.dex`, tách khỏi APK:
 
 ```
-APK (cài một lần)                         GitHub Releases (mỗi lần push)
-├─ vỏ MainActivity / BridgeService  ◀──── releases/latest/download/feature.json  {version, api, sha256, tag}
-├─ FeatureHost: nạp + cập nhật      ◀──── releases/download/v1.0.N/feature.dex
+APK (cài một lần, từ Releases)            nhánh `live` (CI đẩy mỗi khi code chức năng đổi)
+├─ vỏ MainActivity / BridgeService  ◀──── raw.githubusercontent.com/<repo>/live/feature.json {version, api, sha256, file, notes}
+├─ FeatureHost: nạp + cập nhật      ◀──── raw.githubusercontent.com/<repo>/live/feature-N.dex
 ├─ thư viện: libadb, jsch, BC, …
 └─ assets/feature.dex (bản dự phòng)
 ```
+
+Hai workflow tách riêng: **Live update** (đổi `feature/`) chỉ đẩy `feature.dex` lên nhánh `live`, không tạo release;
+**Build APK** (đổi `app/`, `api/`, cấu hình Gradle, hoặc chạy tay trong tab Actions) mới build APK và tạo release `v1.0.N`.
+Phiên bản chức năng `#N` = số commit trên `main_1`.
 
 - App kiểm tra khi mở, khi bật cầu nối và mỗi 30 phút; tải bản mới, kiểm SHA‑256, lưu read‑only
   (bắt buộc từ Android 14). Bấm **Áp dụng ngay** (Connect → *Cập nhật chức năng*) để khởi động lại app;
@@ -37,7 +41,7 @@ APK (cài một lần)                         GitHub Releases (mỗi lần push
 - Giao diện dựng bằng code (không XML, không WebView) nên cập nhật được cả giao diện qua `DexClassLoader`.
 - Bản tải về gây lỗi → tự đánh dấu hỏng, quay về bản đi kèm APK; có nút *Quay về bản đi kèm APK*.
 - **Vẫn phải cài APK mới** khi đổi: `app/` (manifest, quyền, icon, thư viện), hoặc `api/` (`API_VERSION`).
-  Ghi chú release ghi rõ có cần cài APK hay không.
+  Mỗi release trên GitHub đều là một APK mới cần cài.
 - Tin cậy: bản tải về đến từ cùng repo và cùng CI với APK, qua HTTPS, kiểm SHA‑256 – ngang mức tin cậy của file APK.
 
 ## Thiết lập (3 phút, chỉ trên điện thoại)
@@ -112,5 +116,6 @@ Chỉ cần Python 3 (thư viện chuẩn). Xem thêm [`CLAUDE.md`](CLAUDE.md).
 ./gradlew assembleDebug       # APK + feature/build/outputs/feature/{feature.dex,feature.json}; cần Android SDK 35, JDK 17
 ```
 
-Mỗi lần push lên `main_1`, GitHub Actions build APK + `feature.dex` và tạo release `v1.0.N`; ghi chú release
-liệt kê vắn tắt các commit kể từ bản trước và cho biết có cần cài lại APK không.
+Push lên `main_1`: đổi `feature/` → workflow *Live update* đẩy `feature.dex` lên nhánh `live` (app tự cập nhật);
+đổi phần vỏ (`app/`, `api/`, Gradle) → workflow *Build APK* build APK và tạo release `v1.0.N`
+(ghi chú = các commit kể từ bản trước). Có thể chạy tay *Build APK* trong tab Actions.
