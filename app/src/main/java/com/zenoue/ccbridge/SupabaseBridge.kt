@@ -30,7 +30,8 @@ class SupabaseBridge(private val baseUrl: String, private val key: String) {
         val c = URL(url).openConnection() as HttpURLConnection
         c.requestMethod = method
         c.setRequestProperty("apikey", key)
-        c.setRequestProperty("Authorization", "Bearer $key")
+        // Key mới (sb_publishable_/sb_secret_) không phải JWT -> chỉ gửi qua header apikey.
+        if (key.startsWith("eyJ")) c.setRequestProperty("Authorization", "Bearer $key")
         c.setRequestProperty("Accept", "application/json")
         c.setRequestProperty("User-Agent", "AdbBridge")
         c.connectTimeout = 15000; c.readTimeout = 30000

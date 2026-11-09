@@ -22,7 +22,7 @@ lấy từ [zenoue/Debug_unroot](https://github.com/zenoue/Debug_unroot).
 
 1. Tạo project tại [supabase.com](https://supabase.com) (miễn phí).
 2. **SQL Editor** → chạy [`tools/supabase_setup.sql`](tools/supabase_setup.sql) (tạo bảng `mailbox`).
-3. **Project Settings → API**: lấy **Project URL** và **API key** (service_role, hoặc key có quyền bảng `mailbox`).
+3. Lấy **Project URL** và **Secret key** (`sb_secret_…`, hoặc key cũ `service_role`) – xem [docs/SUPABASE.md](docs/SUPABASE.md).
 
 ## 2. Cài app
 
@@ -39,7 +39,7 @@ lấy từ [zenoue/Debug_unroot](https://github.com/zenoue/Debug_unroot).
 
 ```bash
 export BRIDGE_SUPABASE_URL='https://xxxx.supabase.co'
-export BRIDGE_SUPABASE_KEY='eyJ...'
+export BRIDGE_SUPABASE_KEY='sb_secret_...'
 export BRIDGE_PASSWORD='...'                    # mật khẩu trong app
 
 python3 tools/bridge.py ping                    # app còn sống? ADB đã kết nối?

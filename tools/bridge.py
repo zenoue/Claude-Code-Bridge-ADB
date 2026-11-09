@@ -44,7 +44,8 @@ def req(method, path, body=None):
     data = json.dumps(body).encode() if body is not None else None
     r = urllib.request.Request(url, data=data, method=method)
     r.add_header("apikey", KEY)
-    r.add_header("Authorization", f"Bearer {KEY}")
+    if KEY.startswith("eyJ"):  # key cũ dạng JWT; key mới sb_... chỉ gửi qua apikey
+        r.add_header("Authorization", f"Bearer {KEY}")
     r.add_header("Accept", "application/json")
     if data is not None:
         r.add_header("Content-Type", "application/json")
