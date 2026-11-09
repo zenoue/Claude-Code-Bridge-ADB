@@ -303,7 +303,7 @@ class MainActivity : Activity() {
         val st = BridgeService.tunnel
         return when {
             !BridgeService.running -> "Bấm \"Bắt đầu cầu nối\" để mở đường hầm"
-            st?.url != null -> "${st.url}\n${st.provider?.label ?: ""}"
+            st?.url != null -> st.url
             else -> st?.message ?: "Đang mở đường hầm…"
         }
     }
@@ -412,35 +412,8 @@ class MainActivity : Activity() {
     private fun tunnelCard(): LinearLayout {
         val c = ui.card()
         c.addView(ui.title("Đường hầm & chế độ"))
-        c.addView(ui.label("Nhà cung cấp đường hầm"))
-        val options = listOf(Tunnel.Provider.AUTO to "Tự động") + Tunnel.Provider.ALL.map { it.id to it.label }
-        val chips = ui.row().apply { setPadding(0, dp(6), 0, 0) }
-        val chipViews = ArrayList<TextView>()
-        fun paint() = chipViews.forEachIndexed { i, tv ->
-            val on = options[i].first == cfg.provider ||
-                (i == 0 && Tunnel.Provider.ALL.none { it.id == cfg.provider })
-            tv.setTextColor(if (on) p.onAccent else p.accent)
-            tv.background = GradientDrawable().apply {
-                cornerRadius = dp(16).toFloat()
-                if (on) setColor(p.accent) else setStroke(dp(1), p.accent)
-            }
-        }
-        options.forEach { (id, label) ->
-            val tv = TextView(this).apply {
-                text = label; textSize = 13f; setPadding(dp(14), dp(7), dp(14), dp(7))
-                setOnClickListener {
-                    if (cfg.provider == id) return@setOnClickListener
-                    cfg.provider = id; paint()
-                    if (BridgeService.running) { toast("Đang nối lại với ${label}…"); BridgeService.reconnect(this@MainActivity) }
-                }
-            }
-            chipViews.add(tv)
-            chips.addView(tv, LinearLayout.LayoutParams(-2, -2).apply { rightMargin = dp(8) })
-        }
-        paint()
-        c.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(chips) })
-        c.addView(ui.muted("Tự động: thử localhost.run → Pinggy → serveo.net, nhà nào lỗi liên tục thì chuyển nhà kế. " +
-            "App tự kiểm tra địa chỉ mỗi 45 giây và nối lại ngay khi đổi Wi‑Fi/4G."))
+        c.addView(ui.muted("Đường hầm localhost.run (không cần tài khoản). App tự kiểm tra địa chỉ mỗi 45 giây " +
+            "và nối lại ngay khi đổi Wi‑Fi/4G; địa chỉ có thể đổi sau khi nối lại."))
 
         c.addView(ui.button("Đổi khoá trong địa chỉ", primary = false) {
             cfg.newUrlKey()

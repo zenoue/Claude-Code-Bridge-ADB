@@ -15,7 +15,7 @@ import android.os.IBinder
 import android.os.PowerManager
 
 /**
- * Dịch vụ nền: server HTTP 127.0.0.1:<port> + đường hầm SSH ra địa chỉ https công khai.
+ * Dịch vụ nền: server HTTP 127.0.0.1:<port> + đường hầm localhost.run ra địa chỉ https công khai.
  * Claude Code gửi lệnh vào `<địa chỉ>/<khoá>/cmd`; lệnh chạy qua ADB nội bộ.
  */
 class BridgeService : Service() {
@@ -39,13 +39,6 @@ class BridgeService : Service() {
             if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i)
         }
         fun stop(ctx: Context) = ctx.stopService(Intent(ctx, BridgeService::class.java))
-
-        /** Nối lại đường hầm ngay (vd sau khi đổi nhà cung cấp). */
-        fun reconnect(ctx: Context) {
-            if (!running) return
-            stop(ctx)
-            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ start(ctx) }, 400)
-        }
     }
 
     @Volatile private var alive = false
@@ -103,7 +96,7 @@ class BridgeService : Service() {
                 if (!Adb.isConnected(this)) tryConnectAdb(cfg)
                 val adb = if (Adb.isConnected(this)) "ADB ✓" else "ADB chưa kết nối"
                 val t = when (tunnel?.phase) {
-                    Tunnel.Phase.ONLINE -> "Đường hầm ✓ ${tunnel?.provider?.label ?: ""}".trim()
+                    Tunnel.Phase.ONLINE -> "Đường hầm ✓"
                     Tunnel.Phase.RETRYING -> "Đang nối lại đường hầm…"
                     else -> "Đang mở đường hầm…"
                 }
@@ -124,11 +117,11 @@ class BridgeService : Service() {
             setStatus("Lỗi cổng ${cfg.httpPort}")
             return false
         }
-        tun = Tunnel(Tunnel.Provider.chain(cfg.provider), cfg.httpPort, cfg.sshKey, { "/${cfg.urlKey}/health" }) { st ->
+        tun = Tunnel(cfg.httpPort, cfg.sshKey, { "/${cfg.urlKey}/health" }) { st ->
             val old = tunnel
             tunnel = st
             when {
-                st.phase == Tunnel.Phase.ONLINE && st.url != old?.url -> Console.info("Đường hầm: ${st.url} (${st.provider?.label})")
+                st.phase == Tunnel.Phase.ONLINE && st.url != old?.url -> Console.info("Đường hầm: ${st.url}")
                 st.phase == Tunnel.Phase.RETRYING && st.message != old?.message -> Console.err(st.message)
             }
             onStatus?.invoke()

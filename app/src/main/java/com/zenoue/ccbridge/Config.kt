@@ -9,14 +9,15 @@ class Config(private val ctx: Context) {
     private val sp = ctx.getSharedPreferences("bridge", Context.MODE_PRIVATE)
 
     init {
-        // dọn cấu hình của bản cũ (mật khẩu ký lệnh không còn dùng)
-        if (sp.contains("password")) sp.edit().remove("password").remove("provider").apply()
+        // dọn cấu hình bản cũ (mật khẩu ký lệnh, chọn nhà cung cấp đường hầm không còn dùng)
+        if (sp.contains("password") || sp.contains("provider") || sp.contains("tunnelProvider")) {
+            sp.edit().remove("password").remove("provider").remove("tunnelProvider").apply()
+        }
     }
 
     var allowWrite: Boolean get() = sp.getBoolean("allowWrite", false); set(v) = sp.edit().putBoolean("allowWrite", v).apply()
 
     // Đường hầm
-    var provider: String get() = sp.getString("tunnelProvider", Tunnel.Provider.AUTO) ?: Tunnel.Provider.AUTO; set(v) = put("tunnelProvider", v)
     var httpPort: Int get() = sp.getInt("httpPort", 8765); set(v) = sp.edit().putInt("httpPort", v).apply()
     val sshKey: File get() = File(ctx.filesDir, "tunnel_key")
 

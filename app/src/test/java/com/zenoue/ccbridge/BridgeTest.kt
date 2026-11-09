@@ -93,37 +93,22 @@ class HttpApiTest {
 }
 
 class TunnelParserTest {
-    private val lhr = Tunnel.Provider.LOCALHOST_RUN
-
     @Test fun localhostRunJsonEvent() {
         val out = "{\"event\":\"authn\",\"message\":\"authenticated as anonymous user\"}\n" +
             "{\"event\":\"tcpip-forward\",\"address\":\"abc123def.lhr.life\",\"listen_host\":\"localhost\",\"listen_port\":80}\n"
-        assertEquals("https://abc123def.lhr.life", TunnelParser.parse(out, lhr))
+        assertEquals("https://abc123def.lhr.life", TunnelParser.parse(out))
     }
 
     @Test fun localhostRunTextFallback() {
         val out = "Connect to https://admin.localhost.run/ for docs\nabc123def.lhr.life tunneled with tls termination, https://abc123def.lhr.life\n"
-        assertEquals("https://abc123def.lhr.life", TunnelParser.parse(out, lhr))
+        assertEquals("https://abc123def.lhr.life", TunnelParser.parse(out))
     }
 
-    @Test fun pinggyUrl() {
-        val out = "You are not authenticated.\nhttp://rnxyz-1-2-3-4.a.free.pinggy.link\nhttps://rnxyz-1-2-3-4.a.free.pinggy.link\n"
-        assertEquals("https://rnxyz-1-2-3-4.a.free.pinggy.link", TunnelParser.parse(out, Tunnel.Provider.PINGGY))
+    @Test fun ignoresHomepageAndOtherHosts() {
+        assertNull(TunnelParser.parse("welcome to https://localhost.run and https://www.lhr.life"))
+        assertNull(TunnelParser.parse("https://abc.serveo.net https://x.example.com"))
+        assertNull(TunnelParser.parse("{\"address\":\"localhost\"}"))
     }
 
-    @Test fun serveoUrl() {
-        val out = "Forwarding HTTP traffic from https://9f2c1a.serveousercontent.com\n"
-        assertEquals("https://9f2c1a.serveousercontent.com", TunnelParser.parse(out, Tunnel.Provider.SERVEO))
-    }
-
-    @Test fun ignoresHomepageAndOtherProviders() {
-        assertNull(TunnelParser.parse("welcome to https://localhost.run and https://www.lhr.life", lhr))
-        assertNull(TunnelParser.parse("https://abc.serveo.net", lhr))
-    }
-
-    @Test fun chainSelection() {
-        assertEquals(Tunnel.Provider.ALL, Tunnel.Provider.chain(Tunnel.Provider.AUTO))
-        assertEquals(Tunnel.Provider.ALL, Tunnel.Provider.chain("unknown"))
-        assertEquals(listOf(Tunnel.Provider.PINGGY), Tunnel.Provider.chain("pinggy"))
-    }
+    @Test fun partialOutputHasNoUrlYet() = assertNull(TunnelParser.parse("{\"event\":\"tcpip-forward\",\"addr"))
 }
