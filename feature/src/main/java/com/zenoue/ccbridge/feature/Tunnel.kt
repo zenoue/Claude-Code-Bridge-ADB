@@ -101,7 +101,9 @@ class Tunnel(
                 json = !json // chế độ này không ra địa chỉ -> lần sau thử chế độ kia
             }
             val wait = if (kicked) 500L else backoff
-            val why = error?.let { "Lỗi localhost.run: $it" } ?: "Mất đường hầm localhost.run"
+            val up = (System.currentTimeMillis() - started) / 1000
+            val why = (error?.let { "Lỗi localhost.run: $it" } ?: "Mất đường hầm localhost.run") +
+                (if (kicked) " (nối lại theo yêu cầu)" else "") + " sau ${up}s"
             emit(State(Phase.RETRYING, null, "$why – thử lại sau ${wait / 1000}s…"))
             synchronized(lock) {
                 if (alive && !kicked) try { lock.wait(wait) } catch (_: InterruptedException) { }
@@ -199,6 +201,10 @@ class Tunnel(
 
     // ───────── tự kiểm tra ─────────
 
+    /**
+     * Chỉ ghi nhận, KHÔNG tự bỏ phiên: bỏ phiên = localhost.run cấp địa chỉ mới, người dùng phải sao chép lại.
+     * Phiên SSH chết thật thì keep‑alive (15s × 3) tự phát hiện và nối lại.
+     */
     private fun probeLoop() {
         var bad = 0
         while (alive) {
@@ -206,23 +212,28 @@ class Tunnel(
             val st = state
             val u = st.url
             if (st.phase != Phase.ONLINE || u == null) { bad = 0; continue }
-            if (probe(u + probePath())) bad = 0
-            else if (++bad >= 2 && state.url == u) {
+            val err = probe(u + probePath())
+            if (err == null) {
+                if (bad >= 2) Console.info("Tự kiểm tra địa chỉ: đã phản hồi lại")
                 bad = 0
-                emit(st.copy(message = "Địa chỉ không phản hồi – nối lại…"))
-                kick()
+            } else if (++bad == 2) {
+                Console.err("Tự kiểm tra địa chỉ thất bại 2 lần ($err) – vẫn giữ phiên SSH")
             }
         }
     }
 
-    private fun probe(target: String): Boolean = try {
+    /** null = ổn, ngược lại là mô tả lỗi. */
+    private fun probe(target: String): String? = try {
         val c = URL(target).openConnection() as HttpURLConnection
         c.connectTimeout = 10_000; c.readTimeout = 10_000
         c.setRequestProperty("User-Agent", "cc-bridge-adb/probe")
         try {
-            c.responseCode == 200 && c.inputStream.bufferedReader().use { it.readText() }.startsWith(HttpApi.HEALTH_BODY)
+            val code = c.responseCode
+            if (code != 200) "HTTP $code"
+            else if (!c.inputStream.bufferedReader().use { it.readText() }.startsWith(HttpApi.HEALTH_BODY)) "nội dung lạ"
+            else null
         } finally { c.disconnect() }
-    } catch (_: Throwable) { false }
+    } catch (t: Throwable) { t.javaClass.simpleName + ": " + (t.message ?: "") }
 
     companion object {
         const val HOST = "localhost.run"

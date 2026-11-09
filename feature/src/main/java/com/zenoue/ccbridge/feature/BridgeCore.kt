@@ -78,8 +78,25 @@ class BridgeCore(private val svc: Service) : ContextWrapper(svc), ServiceDelegat
         Console.info("Cầu nối đã dừng")
     }
 
+    private var keptAlive = false
+
+    /**
+     * ColorOS/MIUI… hay giết app chạy nền -> app khởi động lại -> đường hầm đổi địa chỉ. App có quyền shell
+     * qua ADB nên tự đưa mình vào danh sách không tối ưu pin / không hạn chế nền (một lần mỗi lần bật cầu nối).
+     */
+    private fun keepAlive() {
+        if (keptAlive || !Adb.isConnected(this)) return
+        keptAlive = true
+        val pkg = packageName
+        val r = try {
+            Adb.run(this, "cmd deviceidle whitelist +$pkg; cmd appops set $pkg RUN_ANY_IN_BACKGROUND allow; " +
+                "cmd appops set $pkg RUN_IN_BACKGROUND allow; am set-standby-bucket $pkg active", 15_000)
+        } catch (t: Throwable) { Adb.onCommandError(this, t) }
+        Console.info("Chống bị hệ thống tắt nền: " + if (r.exit == 0) "đã bật" else "lỗi ${r.exit}: ${r.output.take(200)}")
+    }
+
     private fun tryConnectAdb(cfg: Config) {
-        if (Adb.isConnected(this)) return
+        if (Adb.isConnected(this)) { keepAlive(); return }
         // cổng 5555 (không cần Wi‑Fi) trước, rồi mới tới Gỡ lỗi không dây
         if (cfg.tcpMode && Adb.tcpPortOpen() && Adb.connect(this, "127.0.0.1", Adb.TCP_PORT)) {
             Console.info("ADB kết nối 127.0.0.1:${Adb.TCP_PORT} (không cần Wi‑Fi)"); return

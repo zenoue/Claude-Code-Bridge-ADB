@@ -37,7 +37,12 @@ object Console {
     fun clear() { synchronized(lines) { lines.clear() }; onChange?.invoke() }
 
     /** Toàn bộ nội dung dạng text (để sao chép). */
-    fun dump(): String = snapshot().joinToString("\n") { e ->
+    fun dump(): String {
+        val f = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.ROOT)
+        return snapshot().joinToString("\n") { e -> "[${f.format(java.util.Date(e.time))}] " + line(e) }
+    }
+
+    private fun line(e: Entry): String =
         when (e.kind) {
             Kind.CMD_LOCAL -> "$ ${e.text}"
             Kind.CMD_REMOTE -> "claude$ ${e.text}"
@@ -45,5 +50,4 @@ object Console {
             Kind.INFO -> "· ${e.text}"
             Kind.ERR -> "✗ ${e.text}"
         }
-    }
 }

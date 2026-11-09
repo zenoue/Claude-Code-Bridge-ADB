@@ -274,7 +274,7 @@ class MainScreen(private val activity: Activity) : ContextWrapper(activity), Act
             Console.Kind.ERR -> Triple("✗ ", p.bad, false)
         }
         return TextView(this).apply {
-            val time = if (e.kind == Console.Kind.CMD_LOCAL || e.kind == Console.Kind.CMD_REMOTE) "  [${Fmt.clock(e.time)}]" else ""
+            val time = if (e.kind == Console.Kind.OUT) "" else "  [${Fmt.clock(e.time)}]"
             text = prefix + e.text + time
             setTextColor(color); textSize = 12f
             typeface = if (bold) Typeface.create(Typeface.MONOSPACE, Typeface.BOLD) else Typeface.MONOSPACE
