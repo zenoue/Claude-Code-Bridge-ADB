@@ -1,22 +1,20 @@
 #!/usr/bin/env python3
-"""Claude Code ↔ ADB qua Supabase (chạy ở phía Claude Code).
+"""Claude Code ↔ ADB: gửi lệnh adb shell tới điện thoại (chạy ở phía Claude Code).
 
-Ghi lệnh đã ký vào bảng mailbox và đọc kết quả/log. Chỉ dùng thư viện chuẩn.
-
-Biến môi trường:
-  BRIDGE_SUPABASE_URL   https://xxxx.supabase.co   (bắt buộc)
-  BRIDGE_SUPABASE_KEY   API key (service_role hoặc key có quyền bảng) (bắt buộc)
-  BRIDGE_PASSWORD       mật khẩu lấy từ app (bắt buộc)
+Hai kênh (tự chọn theo biến môi trường, ưu tiên đường hầm):
+  Đường hầm  BRIDGE_URL=https://xxxx.lhr.life   (địa chỉ hiện trong app, tab Connect)
+  Supabase   BRIDGE_SUPABASE_URL + BRIDGE_SUPABASE_KEY
+Luôn cần   BRIDGE_PASSWORD  (mật khẩu ký lệnh trong app; không bao giờ gửi đi, chỉ dùng để ký HMAC)
 
 Dùng:
-  bridge.py exec "dumpsys battery"     # chạy lệnh adb shell, in output, thoát với exit code của lệnh
   bridge.py ping                       # kiểm tra app còn sống + ADB đã kết nối
+  bridge.py exec "dumpsys battery"     # chạy lệnh, in output, thoát với exit code của lệnh
   bridge.py logcat ["logcat -v time"]  # bật stream logcat và theo dõi (Ctrl+C)
   bridge.py stop-logcat
-  bridge.py watch                      # chỉ theo dõi log stream
-  bridge.py cleanup [giờ]              # xoá hàng cũ hơn N giờ (mặc định 24)
+  bridge.py cleanup [giờ]              # (Supabase) xoá hàng cũ hơn N giờ, mặc định 24
 
-Biến BRIDGE_TIMEOUT (giây, mặc định 90) đặt thời gian chờ kết quả.
+BRIDGE_TIMEOUT (giây, mặc định 90) = thời gian chờ tối đa mỗi lệnh.
+Chỉ dùng thư viện chuẩn Python 3.
 """
 import hashlib
 import hmac
@@ -25,28 +23,65 @@ import os
 import secrets
 import sys
 import time
-import urllib.parse
 import urllib.error
+import urllib.parse
 import urllib.request
 
-URL = os.environ.get("BRIDGE_SUPABASE_URL", "").rstrip("/")
-KEY = os.environ.get("BRIDGE_SUPABASE_KEY", "")
+TUNNEL = os.environ.get("BRIDGE_URL", "").rstrip("/")
+SUPA_URL = os.environ.get("BRIDGE_SUPABASE_URL", "").rstrip("/")
+SUPA_KEY = os.environ.get("BRIDGE_SUPABASE_KEY", "")
 PASSWORD = os.environ.get("BRIDGE_PASSWORD", "")
+TIMEOUT = float(os.environ.get("BRIDGE_TIMEOUT", "90"))
+UA = "cc-bridge-adb/1.0"
 
 
-def die(m):
+def die(m, code=1):
     print(f"Lỗi: {m}", file=sys.stderr)
-    sys.exit(1)
+    sys.exit(code)
 
 
-def req(method, path, body=None):
-    url = f"{URL}/rest/v1/{path}"
+def signed(typ, cmd=""):
+    seq = int(time.time() * 1000)
+    nonce = secrets.token_hex(12)
+    msg = f"{seq}\n{seq}\n{typ}\n{nonce}\n{cmd}".encode()
+    sig = hmac.new(PASSWORD.encode(), msg, hashlib.sha256).hexdigest()
+    return {"seq": seq, "ts": seq, "type": typ, "cmd": cmd, "nonce": nonce, "sig": sig}
+
+
+# ───────── kênh đường hầm (HTTP trực tiếp tới app) ─────────
+
+def tunnel_send(typ, cmd="", timeout=None):
+    timeout = timeout or TIMEOUT
+    body = signed(typ, cmd)
+    body["timeout"] = int(max(1, timeout - 5) * 1000)  # app dừng lệnh trước khi HTTP hết giờ
+    r = urllib.request.Request(f"{TUNNEL}/cmd", data=json.dumps(body).encode(), method="POST",
+                               headers={"Content-Type": "application/json", "User-Agent": UA})
+    try:
+        with urllib.request.urlopen(r, timeout=timeout + 10) as resp:
+            d = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        txt = e.read().decode(errors="replace")
+        try:
+            d = json.loads(txt)
+        except ValueError:
+            die(f"HTTP {e.code} từ đường hầm (app tắt hoặc địa chỉ đã đổi?): {txt[:200]}")
+        if "exit" not in d:
+            die(f"{d.get('error', txt[:200])} – kiểm tra BRIDGE_URL")
+    except Exception as e:
+        die(f"không gọi được {TUNNEL}: {e}")
+    return d.get("exit"), d.get("output", ""), d.get("next")
+
+
+# ───────── kênh Supabase (hộp thư) ─────────
+
+def supa_req(method, path, body=None):
     data = json.dumps(body).encode() if body is not None else None
-    r = urllib.request.Request(url, data=data, method=method)
-    r.add_header("apikey", KEY)
-    if KEY.startswith("eyJ"):  # key cũ dạng JWT; key mới sb_... chỉ gửi qua apikey
-        r.add_header("Authorization", f"Bearer {KEY}")
+    r = urllib.request.Request(f"{SUPA_URL}/rest/v1/{path}", data=data, method=method)
+    r.add_header("apikey", SUPA_KEY)
+    if SUPA_KEY.startswith("eyJ"):  # key cũ dạng JWT; key mới sb_... chỉ gửi qua apikey
+        r.add_header("Authorization", f"Bearer {SUPA_KEY}")
     r.add_header("Accept", "application/json")
+    r.add_header("User-Agent", UA)
     if data is not None:
         r.add_header("Content-Type", "application/json")
         r.add_header("Prefer", "return=minimal")
@@ -60,59 +95,33 @@ def req(method, path, body=None):
         die(str(e))
 
 
-def sign(seq, ts, typ, cmd, nonce):
-    msg = f"{seq}\n{ts}\n{typ}\n{nonce}\n{cmd}".encode()
-    return hmac.new(PASSWORD.encode(), msg, hashlib.sha256).hexdigest()
-
-
-def send(typ, cmd=""):
-    seq = int(time.time() * 1000)
-    ts = seq
-    nonce = secrets.token_hex(8)
-    req("POST", "mailbox", [{
-        "dir": "cmd", "seq": seq, "ts": ts, "type": typ, "cmd": cmd,
-        "nonce": nonce, "sig": sign(seq, ts, typ, cmd, nonce),
-    }])
-    return seq
-
-
-def wait_result(seq, timeout=None):
-    timeout = timeout or float(os.environ.get("BRIDGE_TIMEOUT", "90"))
-    print(f"Đã gửi #{seq}, chờ kết quả…", file=sys.stderr)
+def supa_send(typ, cmd="", timeout=None):
+    timeout = timeout or TIMEOUT
+    row = signed(typ, cmd)
+    row["dir"] = "cmd"
+    supa_req("POST", "mailbox", [row])
+    seq = row["seq"]
     start = time.time()
     while time.time() - start < timeout:
-        rows = req("GET", f"mailbox?dir=eq.res&seq=eq.{seq}&order=part.asc&select=part,parts,exit,output")
+        rows = supa_req("GET", f"mailbox?dir=eq.res&seq=eq.{seq}&order=part.asc&select=part,parts,exit,output")
         if rows:
             parts = {r["part"]: r for r in rows}
             if len(parts) >= rows[0].get("parts", 1):
-                out = "".join(parts[i]["output"] for i in sorted(parts))
-                return rows[0].get("exit"), out
+                return rows[0].get("exit"), "".join(parts[i]["output"] for i in sorted(parts)), None
         time.sleep(1.5)
-    die("hết giờ chờ kết quả (app đang chạy chưa?)")
+    die("hết giờ chờ kết quả (cầu nối trong app đang bật chưa?)")
 
 
-def last_log_id():
-    rows = req("GET", "mailbox?dir=eq.log&order=id.desc&limit=1&select=id")
-    return rows[0]["id"] if rows else 0
+def send(typ, cmd="", timeout=None):
+    return (tunnel_send if TUNNEL else supa_send)(typ, cmd, timeout)
 
 
-def follow_logs(since_id):
-    try:
-        while True:
-            rows = req("GET", f"mailbox?dir=eq.log&id=gt.{since_id}&order=id.asc&select=id,output")
-            for r in rows:
-                sys.stdout.write(r.get("output", ""))
-                since_id = max(since_id, r["id"])
-            sys.stdout.flush()
-            time.sleep(2)
-    except KeyboardInterrupt:
-        print("\n(ngừng theo dõi)", file=sys.stderr)
-
+# ───────── lệnh ─────────
 
 def cmd_exec(args):
     if not args:
         die("thiếu lệnh")
-    code, out = wait_result(send("exec", " ".join(args)))
+    code, out, _ = send("exec", " ".join(args))
     sys.stdout.write(out if out.endswith("\n") or not out else out + "\n")
     if code:
         print(f"[exit {code}]", file=sys.stderr)
@@ -120,46 +129,73 @@ def cmd_exec(args):
 
 
 def cmd_ping(_):
-    _, out = wait_result(send("ping"), timeout=20)
+    code, out, _ = send("ping", timeout=20)
     print(out)
+    sys.exit(0 if code == 0 else 1)
+
+
+def follow_tunnel(after):
+    while True:
+        code, out, nxt = tunnel_send("logs", str(after), timeout=20)
+        if out:
+            sys.stdout.write(out)
+            sys.stdout.flush()
+        after = nxt if nxt is not None else after
+        if code != 0 and not out:
+            print("(stream đã dừng)", file=sys.stderr)
+            return
+        time.sleep(1.5)
+
+
+def follow_supabase(since_id):
+    while True:
+        for r in supa_req("GET", f"mailbox?dir=eq.log&id=gt.{since_id}&order=id.asc&select=id,output"):
+            sys.stdout.write(r.get("output", ""))
+            since_id = max(since_id, r["id"])
+        sys.stdout.flush()
+        time.sleep(2)
 
 
 def cmd_logcat(args):
-    since = last_log_id()
-    wait_result(send("logcat_start", " ".join(args) if args else ""), timeout=30)
-    print("Đang stream logcat (Ctrl+C để dừng). Dừng hẳn: bridge.py stop-logcat", file=sys.stderr)
-    follow_logs(since)
+    since = 0
+    if not TUNNEL:
+        rows = supa_req("GET", "mailbox?dir=eq.log&order=id.desc&limit=1&select=id")
+        since = rows[0]["id"] if rows else 0
+    code, out, nxt = send("logcat_start", " ".join(args), timeout=30)
+    print(out, file=sys.stderr)
+    if code:
+        sys.exit(1)
+    print("Đang stream (Ctrl+C để ngừng xem). Tắt hẳn: bridge.py stop-logcat", file=sys.stderr)
+    try:
+        follow_tunnel(nxt or 0) if TUNNEL else follow_supabase(since)
+    except KeyboardInterrupt:
+        print("\n(ngừng theo dõi)", file=sys.stderr)
 
 
 def cmd_stop(_):
-    _, out = wait_result(send("logcat_stop"))
-    print(out)
-
-
-def cmd_watch(_):
-    follow_logs(last_log_id())
+    print(send("logcat_stop")[1])
 
 
 def cmd_cleanup(args):
+    if not SUPA_URL:
+        die("cleanup chỉ dùng cho kênh Supabase")
     hours = float(args[0]) if args else 24.0
     cutoff = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - hours * 3600))
-    req("DELETE", "mailbox?created_at=lt." + urllib.parse.quote(cutoff))
+    supa_req("DELETE", "mailbox?created_at=lt." + urllib.parse.quote(cutoff))
     print(f"Đã xoá hàng cũ hơn {hours:g} giờ.")
 
 
 def main():
-    if not URL:
-        die("thiếu BRIDGE_SUPABASE_URL")
-    if not KEY:
-        die("thiếu BRIDGE_SUPABASE_KEY")
-    if not PASSWORD:
-        die("thiếu BRIDGE_PASSWORD")
-    if len(sys.argv) < 2:
+    if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help", "help"):
         print(__doc__)
         return
+    if not PASSWORD:
+        die("thiếu BRIDGE_PASSWORD")
+    if not TUNNEL and not (SUPA_URL and SUPA_KEY):
+        die("thiếu BRIDGE_URL (đường hầm) hoặc BRIDGE_SUPABASE_URL + BRIDGE_SUPABASE_KEY")
     {
         "exec": cmd_exec, "ping": cmd_ping, "logcat": cmd_logcat,
-        "stop-logcat": cmd_stop, "watch": cmd_watch, "cleanup": cmd_cleanup,
+        "stop-logcat": cmd_stop, "cleanup": cmd_cleanup,
     }.get(sys.argv[1], lambda _: die(f"lệnh không rõ: {sys.argv[1]}"))(sys.argv[2:])
 
 

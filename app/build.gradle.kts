@@ -57,5 +57,10 @@ dependencies {
     // Sinh chứng chỉ X.509 tự ký cho khoá ADB (cùng biến thể BouncyCastle mà libadb dùng để tránh trùng lớp)
     implementation("org.bouncycastle:bcpkix-jdk15to18:1.81")
 
+    // Đường hầm SSH ngược (localhost.run / serveo) chạy ngay trong app
+    implementation("com.github.mwiede:jsch:2.28.8")
+
     testImplementation("junit:junit:4.13.2")
+    // org.json trong android.jar chỉ là stub -> dùng bản thật cho unit test
+    testImplementation("org.json:json:20240303")
 }

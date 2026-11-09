@@ -70,3 +70,54 @@ class ConsoleTest {
         assertEquals("new", fresh[0].text)
     }
 }
+
+class HttpApiTest {
+    private val pw = "testpassword12"
+    private var clock = 1_800_000_000_000L
+    private val api = HttpApi({ pw }, { type, cmd, t -> HttpApi.Reply(0, "$type:$cmd:$t") }, { clock })
+
+    private fun req(cmd: String, nonce: String = "nonce-" + cmd.hashCode(), ts: Long = clock, password: String = pw, timeout: Long? = null): LocalServer.Response {
+        val sig = Crypto.sign(password, ts, ts, "exec", cmd, nonce)
+        val t = if (timeout != null) ",\"timeout\":$timeout" else ""
+        val body = "{\"seq\":$ts,\"ts\":$ts,\"type\":\"exec\",\"cmd\":${LocalServer.jsonStr(cmd)},\"nonce\":\"$nonce\",\"sig\":\"$sig\"$t}"
+        return api.handle(LocalServer.Request("POST", "/cmd", emptyMap(), body))
+    }
+
+    @Test fun validCommandRuns() {
+        val r = req("dumpsys battery", timeout = 5000)
+        assertEquals(200, r.code)
+        assertTrue(r.body.contains("exec:dumpsys battery:5000"))
+    }
+
+    @Test fun wrongPasswordRejected() = assertEquals(401, req("ls", password = "otherpassword").code)
+
+    @Test fun replayRejected() {
+        assertEquals(200, req("ls", nonce = "fixednonce1").code)
+        assertEquals(409, req("ls", nonce = "fixednonce1").code)
+    }
+
+    @Test fun staleRejected() = assertEquals(401, req("ls", ts = clock - 10 * 60_000).code)
+
+    @Test fun healthAndNotFound() {
+        assertEquals(200, api.handle(LocalServer.Request("GET", "/", emptyMap(), "")).code)
+        assertEquals(404, api.handle(LocalServer.Request("GET", "/x", emptyMap(), "")).code)
+    }
+
+    @Test fun jsonEscaping() = assertEquals("\"a\\\"b\\n\\u0001\"", LocalServer.jsonStr("a\"b\n\u0001"))
+}
+
+class TunnelUrlTest {
+    @Test fun localhostRunUrl() {
+        val out = "Connect to https://admin.localhost.run/ for docs\nabc123def.lhr.life tunneled with tls termination, https://abc123def.lhr.life\n"
+        assertEquals("https://abc123def.lhr.life", Tunnel.findUrl(out, Tunnel.Provider.LOCALHOST_RUN))
+    }
+
+    @Test fun serveoUrl() {
+        val out = "Forwarding HTTP traffic from https://9f2c1a.serveousercontent.com\n"
+        assertEquals("https://9f2c1a.serveousercontent.com", Tunnel.findUrl(out, Tunnel.Provider.SERVEO))
+    }
+
+    @Test fun noUrl() = assertEquals(null, Tunnel.findUrl("welcome to https://localhost.run", Tunnel.Provider.LOCALHOST_RUN))
+
+    @Test fun newlineCannotSmuggleCommands() = assertFalse(Policy.allowed("ls\ntouch /sdcard/x"))
+}

@@ -1,5 +1,8 @@
 # Thiết lập Supabase cho người mới (≈10 phút)
 
+> Kênh **dự phòng**. Cách mặc định là đường hầm (không cần tài khoản) – xem README. Dùng Supabase khi đường hầm
+> không chạy hoặc muốn dữ liệu đi qua project của riêng bạn.
+
 Supabase là dịch vụ cơ sở dữ liệu (Postgres) trên mây, có gói **miễn phí**. Ở đây nó chỉ đóng vai
 **hộp thư** (bảng `mailbox`): Claude Code bỏ lệnh vào, app trên điện thoại lấy lệnh ra, chạy, rồi bỏ kết quả lại.
 Bạn **không cần biết lập trình cơ sở dữ liệu** — chỉ cần làm 4 bước dưới, đều trên trình duyệt điện thoại được.
@@ -37,14 +40,13 @@ Bạn **không cần biết lập trình cơ sở dữ liệu** — chỉ cần 
 
 ## Bước 4 – Nhập vào app và Claude Code
 
-**Trên điện thoại** – app → tab **Connect** → thẻ *Supabase*:
-1. Dán **Project URL** và **Secret key**.
-2. Bấm **Tạo mật khẩu ngẫu nhiên** (mật khẩu ký lệnh – khác mật khẩu database ở Bước 1).
-3. **Lưu & kiểm tra** → thấy `✓ Supabase OK`.
-4. Kết nối ADB (thẻ *Gỡ lỗi không dây*) → **Bắt đầu cầu nối**.
-5. Thẻ *Cấu hình cho Claude Code* → **Sao chép biến môi trường**.
+**Trên điện thoại** – app → tab **Connect**:
+1. Thẻ *Mật khẩu & chế độ*: **Tạo mật khẩu ngẫu nhiên** → **Lưu** (mật khẩu ký lệnh, ≥12 ký tự – khác mật khẩu database ở Bước 1).
+2. Thẻ *Supabase (tuỳ chọn)*: bật **Nhận lệnh qua Supabase**, dán **Project URL** + **Secret key** → **Lưu & kiểm tra** → `✓ Supabase OK`.
+3. Kết nối ADB (thẻ *Gỡ lỗi không dây*) → **Bắt đầu cầu nối**.
+4. **Sao chép cho Claude Code**.
 
-**Phía Claude Code** – dán 3 dòng vừa sao chép vào terminal (hoặc mục *Environment variables* của môi trường cloud), rồi:
+**Phía Claude Code** – dán các dòng vừa sao chép vào terminal (hoặc mục *Environment variables* của môi trường cloud), rồi:
 
 ```bash
 python3 tools/bridge.py ping      # → pong · ADB=true · <tên máy>

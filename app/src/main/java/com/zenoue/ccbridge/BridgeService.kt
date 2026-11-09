@@ -10,13 +10,12 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import java.util.Collections
+import android.os.PowerManager
 
 /**
- * Dịch vụ nền: hỏi vòng Supabase lấy lệnh của Claude, chạy adb, ghi kết quả/log về Supabase.
- * Lệnh và kết quả cũng hiện trong cửa sổ lệnh (Console).
+ * Dịch vụ nền của cầu nối. Hai kênh nhận lệnh (đều phải ký HMAC bằng mật khẩu):
+ *  - Đường hầm: HTTP 127.0.0.1:<port> + đường hầm SSH ra URL https công khai (mặc định).
+ *  - Supabase: hỏi vòng bảng mailbox (tuỳ chọn).
  */
 class BridgeService : Service() {
 
@@ -27,6 +26,8 @@ class BridgeService : Service() {
         private const val POLL_MS = 1500L
         @Volatile var running = false; private set
         @Volatile var status = "Chưa chạy"; private set
+        @Volatile var tunnelUrl: String? = null; private set
+        @Volatile var tunnelState: String = ""; private set
         @Volatile var onStatus: (() -> Unit)? = null
 
         fun start(ctx: Context) {
@@ -38,28 +39,34 @@ class BridgeService : Service() {
 
     @Volatile private var alive = false
     private var worker: Thread? = null
-    @Volatile private var logcatStream: io.github.muntashirakon.adb.AdbStream? = null
-    private val logcatBuf = Collections.synchronizedList(ArrayList<String>())
-    @Volatile private var logcatDirty = false
+    private var server: LocalServer? = null
+    private var tunnel: Tunnel? = null
+    private var wake: PowerManager.WakeLock? = null
 
     override fun onBind(i: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         createChannel()
-        val type = if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC else 0
-        if (Build.VERSION.SDK_INT >= 34) startForeground(NOTIF_ID, notif("Đang khởi động…"), type)
+        if (Build.VERSION.SDK_INT >= 34) startForeground(NOTIF_ID, notif("Đang khởi động…"), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         else startForeground(NOTIF_ID, notif("Đang khởi động…"))
         alive = true; running = true
-        worker = Thread { loop() }.apply { isDaemon = true; start() }
+        // giữ CPU khi tắt màn hình để đường hầm/hỏi vòng không bị ngủ
+        wake = getSystemService(PowerManager::class.java)
+            ?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "ccbridge:bridge")?.apply { setReferenceCounted(false); acquire() }
+        worker = Thread { loop() }.apply { isDaemon = true; name = "bridge"; start() }
     }
 
     override fun onStartCommand(i: Intent?, f: Int, id: Int) = START_STICKY
 
     override fun onDestroy() {
         alive = false; running = false
-        stopLogcat()
         worker?.interrupt()
+        tunnel?.stop(); tunnel = null
+        server?.stop(); server = null
+        LogStream.stop()
+        try { wake?.release() } catch (_: Throwable) { }
+        tunnelUrl = null; tunnelState = ""
         status = "Đã dừng"; onStatus?.invoke()
         getSystemService(NotificationManager::class.java)?.cancel(NOTIF_ID)
         Console.info("Cầu nối đã dừng")
@@ -75,18 +82,28 @@ class BridgeService : Service() {
     private fun loop() {
         val cfg = Config(this)
         if (!cfg.ready) { setStatus("Thiếu cấu hình"); stopSelf(); return }
-        val sb = cfg.bridge()
-        sb.check()?.let { setStatus("Lỗi Supabase: $it"); Console.err(it) } ?: Console.info("Cầu nối Supabase đã bật – chờ lệnh từ Claude Code")
         tryConnectAdb(cfg)
+        if (cfg.tunnelEnabled) startTunnel(cfg)
+        val sb = if (cfg.supabaseEnabled && cfg.supabaseReady) cfg.bridge() else null
+        if (sb != null) {
+            sb.check()?.let { Console.err("Supabase: $it") } ?: Console.info("Supabase đã bật – chờ lệnh từ Claude Code")
+        }
         var lastFlush = 0L
+        var logCursor = LogStream.lastId()
         while (alive) {
             try {
                 if (!Adb.isConnected(this)) tryConnectAdb(cfg)
-                setStatus(if (Adb.isConnected(this)) "Đang nghe lệnh…" else "Chờ (ADB chưa kết nối)")
-                val cmds = sb.pollCommands(cfg.lastSeq)
-                for (c in cmds) handle(cfg, sb, c)
-                val now = System.currentTimeMillis()
-                if (logcatDirty && now - lastFlush > 1200) { flushLogcat(sb); lastFlush = now }
+                if (sb != null) {
+                    for (c in sb.pollCommands(cfg.lastSeq)) handleSupabase(cfg, sb, c)
+                    val now = System.currentTimeMillis()
+                    if (LogStream.running && now - lastFlush > 1200) {
+                        val (next, lines) = LogStream.since(logCursor)
+                        logCursor = next
+                        if (lines.isNotEmpty()) flushLog(sb, lines)
+                        lastFlush = now
+                    }
+                }
+                refreshStatus(cfg, sb != null)
             } catch (t: Throwable) {
                 Console.err("Lỗi vòng lặp: ${t.message}")
             }
@@ -94,7 +111,36 @@ class BridgeService : Service() {
         }
     }
 
-    private fun handle(cfg: Config, sb: SupabaseBridge, c: SupabaseBridge.Cmd) {
+    private fun refreshStatus(cfg: Config, supa: Boolean) {
+        val adb = if (Adb.isConnected(this)) "ADB ✓" else "ADB chưa kết nối"
+        val parts = ArrayList<String>()
+        if (cfg.tunnelEnabled) parts.add(if (tunnelUrl != null) "Đường hầm ✓" else "Đường hầm…")
+        if (supa) parts.add("Supabase ✓")
+        setStatus((parts + adb).joinToString(" · "))
+    }
+
+    // ───────── đường hầm ─────────
+
+    private fun startTunnel(cfg: Config) {
+        val api = HttpApi({ cfg.password }, { type, cmd, t -> Commands.run(this, cfg, type, cmd, t, "đường hầm") })
+        try {
+            server = LocalServer(cfg.httpPort, api::handle).also { it.start() }
+        } catch (t: Throwable) {
+            Console.err("Không mở được cổng ${cfg.httpPort}: ${t.message}"); return
+        }
+        val p = Tunnel.Provider.of(cfg.provider)
+        tunnel = Tunnel(p, cfg.httpPort, cfg.sshKey) { st, url ->
+            val changed = url != tunnelUrl
+            tunnelState = st; tunnelUrl = url
+            if (url != null && changed) Console.info("Đường hầm: $url")
+            else if (url == null && st.startsWith("Lỗi")) Console.err(st)
+            onStatus?.invoke()
+        }.also { it.start() }
+    }
+
+    // ───────── Supabase ─────────
+
+    private fun handleSupabase(cfg: Config, sb: SupabaseBridge, c: SupabaseBridge.Cmd) {
         if (c.seq <= cfg.lastSeq) return
         cfg.lastSeq = c.seq
         if (!Crypto.verify(cfg.password, c.seq, c.ts, c.type, c.cmd, c.nonce, c.sig)) {
@@ -102,79 +148,20 @@ class BridgeService : Service() {
             Console.err("#${c.seq} từ chối: sai mật khẩu"); return
         }
         if (c.ts in 1..(System.currentTimeMillis() - 600_000)) { Console.err("#${c.seq} bỏ: quá cũ"); return }
-
-        when (c.type) {
-            "ping" -> { sb.insertResult(c.seq, 1, 1, 0, "pong · ADB=${Adb.isConnected(this)} · ${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE}"); Console.info("claude ping #${c.seq}") }
-            "logcat_start" -> {
-                val lc = c.cmd.ifBlank { "logcat -v time" }
-                if (!cfg.allowWrite && !Policy.allowed(lc)) { sb.insertResult(c.seq, 1, 1, -3, "Lệnh bị chặn (chỉ-đọc)."); return }
-                if (!Adb.isConnected(this)) { sb.insertResult(c.seq, 1, 1, -4, "ADB chưa kết nối."); return }
-                startLogcat(lc); sb.insertResult(c.seq, 1, 1, 0, "Đã bật stream: $lc"); Console.cmdRemote("$lc  (stream)")
-            }
-            "logcat_stop" -> { stopLogcat(); sb.insertResult(c.seq, 1, 1, 0, "Đã tắt stream."); Console.info("tắt logcat #${c.seq}") }
-            else -> execRemote(cfg, sb, c.seq, c.cmd)
+        val r = Commands.run(this, cfg, c.type, c.cmd, 300_000L, "Supabase")
+        val chunks = if (r.output.isEmpty()) listOf("") else r.output.chunked(CHUNK)
+        for ((i, part) in chunks.withIndex()) {
+            if (!sb.insertResult(c.seq, i + 1, chunks.size, r.exit, part)) Console.err("Ghi kết quả #${c.seq} phần ${i + 1} lỗi")
         }
     }
 
-    private fun execRemote(cfg: Config, sb: SupabaseBridge, seq: Long, cmd: String) {
-        if (cmd.isBlank()) { sb.insertResult(seq, 1, 1, -1, "Lệnh rỗng."); return }
-        if (!cfg.allowWrite && !Policy.allowed(cmd)) {
-            sb.insertResult(seq, 1, 1, -3, "Lệnh bị chặn ở chế độ chỉ-đọc.")
-            Console.cmdRemote(cmd); Console.err("bị chặn (chỉ-đọc)"); return
-        }
-        if (!Adb.isConnected(this)) { sb.insertResult(seq, 1, 1, -4, "ADB chưa kết nối."); Console.cmdRemote(cmd); Console.err("ADB chưa kết nối"); return }
-        setStatus("Đang chạy #$seq…")
-        Console.cmdRemote(cmd)
-        val r = try { Adb.run(this, cmd) } catch (t: Throwable) { Adb.disconnect(this); Adb.Result(-1, t.toString(), "ADB") }
-        Console.out(r.output.ifBlank { "(không có output)" })
-        if (r.exit != 0) Console.err("exit ${r.exit}")
-        sendResult(sb, seq, r.exit, r.output)
-        setStatus("Đang nghe lệnh…")
-    }
-
-    private fun sendResult(sb: SupabaseBridge, seq: Long, exit: Int, output: String) {
-        val chunks = if (output.isEmpty()) listOf("") else output.chunked(CHUNK)
-        for ((i, c) in chunks.withIndex()) {
-            if (!sb.insertResult(seq, i + 1, chunks.size, exit, c)) Console.err("Ghi kết quả #$seq phần ${i + 1} lỗi")
-        }
-    }
-
-    // ───────── logcat ─────────
-
-    private fun startLogcat(cmd: String) {
-        stopLogcat()
-        try {
-            val st = Adb.openShell(this, cmd)
-            logcatStream = st
-            Thread {
-                try {
-                    BufferedReader(InputStreamReader(st.openInputStream())).use { r ->
-                        while (alive && logcatStream === st) {
-                            val line = r.readLine() ?: break
-                            synchronized(logcatBuf) { logcatBuf.add(line); while (logcatBuf.size > 5000) logcatBuf.removeAt(0) }
-                            logcatDirty = true
-                        }
-                    }
-                } catch (_: Throwable) { }
-            }.apply { isDaemon = true; start() }
-        } catch (t: Throwable) { Console.err("Không bật được logcat: ${t.message}") }
-    }
-
-    private fun stopLogcat() {
-        val st = logcatStream; logcatStream = null
-        try { st?.close() } catch (_: Exception) { }
-    }
-
-    private fun flushLogcat(sb: SupabaseBridge) {
-        logcatDirty = false
-        val lines = synchronized(logcatBuf) { val c = ArrayList(logcatBuf); logcatBuf.clear(); c }
-        if (lines.isEmpty()) return
+    private fun flushLog(sb: SupabaseBridge, lines: List<String>) {
         var buf = StringBuilder()
         for (l in lines) {
             if (buf.length + l.length + 1 > CHUNK) { sb.insertLog(buf.toString()); buf = StringBuilder() }
             buf.append(l).append('\n')
         }
-        if (buf.isNotEmpty()) { sb.insertLog(buf.toString()); Console.out(buf.toString()) }
+        if (buf.isNotEmpty()) sb.insertLog(buf.toString())
     }
 
     // ───────── notification ─────────
@@ -198,38 +185,9 @@ class BridgeService : Service() {
         )
         return Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat)
-            .setContentTitle("Claude Code ↔ ADB (Supabase)")
+            .setContentTitle("Claude Code ↔ ADB")
             .setContentText(text)
             .setOngoing(true).setOnlyAlertOnce(true).setContentIntent(pi)
             .build()
     }
-}
-
-/** Danh sách lệnh an toàn (chỉ-đọc) khi chưa bật "Cho phép mọi lệnh". */
-object Policy {
-    private val safe = setOf(
-        "dumpsys", "getprop", "logcat", "cmd", "ls", "cat", "pm", "settings",
-        "top", "ps", "df", "free", "uptime", "date", "whoami", "id", "wm", "am",
-        "service", "stat", "head", "tail", "grep", "awk", "sed", "echo", "printf",
-        "getevent", "bugreport", "netstat", "ip", "ifconfig", "find", "wc", "sort", "uniq"
-    )
-    private val denyWords = listOf(
-        ">", "rm ", "reboot", "setprop", "stop ", "start ", "uninstall", "install",
-        "clear ", "svc ", "kill", "reset", "wipe", "format", "dd ", "mkfs",
-        "settings put", "pm disable", "pm enable", "pm grant", "pm revoke", "am force-stop"
-    )
-
-    fun allowed(cmd: String): Boolean {
-        val low = cmd.lowercase()
-        if (denyWords.any { low.contains(it) }) return false
-        return cmd.split("|", ";", "&&").all { seg ->
-            val first = seg.trim().split(Regex("\\s+")).firstOrNull()?.substringAfterLast('/') ?: return@all false
-            first.isEmpty() || safe.contains(first)
-        }
-    }
-}
-
-object Fmt {
-    fun clock(t: Long = System.currentTimeMillis()): String =
-        android.text.format.DateFormat.format("HH:mm:ss", t).toString()
 }

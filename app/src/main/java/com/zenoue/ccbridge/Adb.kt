@@ -117,21 +117,34 @@ object Adb {
      * Chạy lệnh rồi trả toàn bộ output kèm exit code thật.
      * Lệnh được nối thêm một dòng `echo marker$?` (xuống dòng để không dính vào comment/`&` của lệnh).
      */
-    fun run(ctx: Context, cmd: String, maxLen: Int = 8 * 1024 * 1024): Result {
+    private val timer = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r ->
+        Thread(r, "adb-timeout").apply { isDaemon = true }
+    }
+
+    /** [timeoutMs] > 0: quá giờ thì đóng stream, trả phần output đã có với exit 124. */
+    fun run(ctx: Context, cmd: String, timeoutMs: Long = 0, maxLen: Int = 8 * 1024 * 1024): Result {
         val stream = openShell(ctx, "$cmd\necho $EXIT_MARK$?")
+        val timedOut = java.util.concurrent.atomic.AtomicBoolean(false)
+        val killer = if (timeoutMs > 0) timer.schedule({
+            timedOut.set(true); try { stream.close() } catch (_: Throwable) { }
+        }, timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS) else null
         val sb = StringBuilder()
         var cut = false
         try {
             BufferedReader(InputStreamReader(stream.openInputStream())).use { r ->
                 val buf = CharArray(16 * 1024)
                 while (true) {
-                    val n = r.read(buf)
+                    val n = try { r.read(buf) } catch (t: Throwable) { if (timedOut.get()) -1 else throw t }
                     if (n < 0) break
                     if (sb.length < maxLen) sb.appendRange(buf, 0, n) else cut = true
                 }
             }
         } finally {
+            killer?.cancel(false)
             try { stream.close() } catch (_: Throwable) { }
+        }
+        if (timedOut.get()) {
+            return Result(124, sb.toString() + "\n…(hết thời gian ${timeoutMs / 1000}s, đã dừng lệnh)", "ADB (shell)")
         }
         val (exit, out) = splitExit(sb.toString())
         return Result(exit, if (cut) "$out\n…(đã cắt bớt)" else out, "ADB (shell)")

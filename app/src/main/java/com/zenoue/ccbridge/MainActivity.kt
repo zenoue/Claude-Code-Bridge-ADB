@@ -97,7 +97,7 @@ class MainActivity : Activity() {
 
         Console.onChange = { main.post { if (tab == TAB_CLI) appendNewConsole() } }
         BridgeService.onStatus = { main.post { refreshStatus() } }
-        selectTab(if (cfg.ready || Adb.isConnected(this)) TAB_CLI else TAB_CONNECT)
+        selectTab(if (cfg.passwordOk && Adb.isConnected(this)) TAB_CLI else TAB_CONNECT)
     }
 
     override fun onResume() { super.onResume(); refreshStatus() }
@@ -111,11 +111,14 @@ class MainActivity : Activity() {
 
     private fun refreshStatus() {
         val adb = Adb.isConnected(this)
-        statusLabel?.text = (if (BridgeService.running) "● " + BridgeService.status else "○ Cầu nối tắt") +
-            " · ADB ${if (adb) "✓" else "✗"}" +
-            " · Supabase ${if (cfg.ready) "✓" else "✗"}"
+        statusLabel?.text = if (BridgeService.running) "● " + BridgeService.status
+            else "○ Cầu nối tắt · ADB ${if (adb) "✓" else "✗"}"
         statusLabel?.setTextColor(if (BridgeService.running) p.accent else p.muted)
         cliHint?.text = cliHintText()
+        tunnelLabel?.let {
+            it.text = tunnelText()
+            it.setTextColor(if (BridgeService.tunnelUrl != null) p.accent else p.muted)
+        }
     }
 
     private fun selectTab(i: Int) {
@@ -130,7 +133,7 @@ class MainActivity : Activity() {
             }
         }
         container.removeAllViews()
-        consoleList = null; consoleScroll = null; cliHint = null; input = null
+        consoleList = null; consoleScroll = null; cliHint = null; input = null; tunnelLabel = null
         if (i == TAB_CLI) container.addView(cliTab()) else container.addView(connectTab())
         refreshStatus()
     }
@@ -276,7 +279,7 @@ class MainActivity : Activity() {
             Console.err("Bị chặn ở chế độ chỉ-đọc (bật \"Cho phép mọi lệnh\" ở tab Connect)"); return
         }
         io.execute {
-            val r = try { Adb.run(this, cmd) } catch (t: Throwable) { Adb.disconnect(this); Adb.Result(-1, t.toString(), "ADB") }
+            val r = try { Adb.run(this, cmd, 120_000) } catch (t: Throwable) { Adb.disconnect(this); Adb.Result(-1, t.toString(), "ADB") }
             Console.out(r.output.ifBlank { "(không có output)" })
             if (r.exit != 0) Console.err("exit ${r.exit}")
             main.post { refreshStatus() }
@@ -285,15 +288,24 @@ class MainActivity : Activity() {
 
     // ───────────────────────── Tab Connect ─────────────────────────
 
+    private var tunnelLabel: TextView? = null
+
     private fun connectTab(): ScrollView {
         val sv = ScrollView(this).apply { isFillViewport = true }
         val col = ui.column().apply { setPadding(dp(16), dp(8), dp(16), dp(28)) }
         sv.addView(col)
         col.addView(bridgeCard())
         col.addView(adbCard())
+        col.addView(securityCard())
         col.addView(supabaseCard())
-        col.addView(claudeCard())
         return sv
+    }
+
+    private fun tunnelText(): String = when {
+        !cfg.tunnelEnabled -> "Đường hầm đang tắt"
+        !BridgeService.running -> "Bấm \"Bắt đầu cầu nối\" để mở đường hầm"
+        BridgeService.tunnelUrl != null -> BridgeService.tunnelUrl!!
+        else -> BridgeService.tunnelState.ifEmpty { "Đang mở đường hầm…" }
     }
 
     private fun bridgeCard(): LinearLayout {
@@ -301,12 +313,17 @@ class MainActivity : Activity() {
         c.addView(ui.title("Cầu nối"))
         c.addView(ui.kv("Trạng thái", if (BridgeService.running) BridgeService.status else "Tắt",
             if (BridgeService.running) p.accent else p.muted))
-        c.addView(ui.kv("ADB", adbStateText(), if (Adb.isConnected(this)) p.accent else p.warn))
-        c.addView(ui.kv("Supabase", if (cfg.ready) "Đã cấu hình" else "Chưa cấu hình", if (cfg.ready) p.accent else p.warn))
+        c.addView(ui.label("Địa chỉ công khai (đường hầm)"))
+        tunnelLabel = ui.mono(tunnelText()).apply {
+            textSize = 13f; setTextColor(if (BridgeService.tunnelUrl != null) p.accent else p.muted)
+            setPadding(0, dp(4), 0, dp(4))
+        }
+        c.addView(tunnelLabel)
         c.addView(ui.button(if (BridgeService.running) "Dừng cầu nối" else "Bắt đầu cầu nối", !BridgeService.running) {
             if (BridgeService.running) BridgeService.stop(this)
             else {
-                if (!cfg.ready) { toast("Chưa đủ cấu hình Supabase (URL, key, mật khẩu ≥6)"); return@button }
+                if (!cfg.passwordOk) { toast("Đặt mật khẩu ≥${Config.MIN_PASSWORD} ký tự ở thẻ Mật khẩu & chế độ"); return@button }
+                if (!cfg.ready) { toast("Bật đường hầm hoặc cấu hình Supabase"); return@button }
                 if (Build.VERSION.SDK_INT >= 33 &&
                     checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
                 ) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
@@ -314,6 +331,15 @@ class MainActivity : Activity() {
             }
             main.postDelayed({ if (tab == TAB_CONNECT) selectTab(TAB_CONNECT) }, 600)
         })
+        c.addView(ui.button("Sao chép cho Claude Code", primary = false) {
+            if (!cfg.passwordOk) { toast("Chưa có mật khẩu"); return@button }
+            if (BridgeService.tunnelUrl == null && !(cfg.supabaseEnabled && cfg.supabaseReady)) {
+                toast("Chưa có địa chỉ đường hầm – bắt đầu cầu nối trước"); return@button
+            }
+            copy(envBlock()); toast("Đã sao chép (có chứa mật khẩu)")
+        })
+        c.addView(ui.muted("Dán vào terminal của Claude Code rồi chạy: python3 tools/bridge.py ping. " +
+            "Địa chỉ có thể đổi khi đường hầm nối lại – khi đó sao chép lại."))
         return c
     }
 
@@ -386,18 +412,40 @@ class MainActivity : Activity() {
         return c
     }
 
-    private fun supabaseCard(): LinearLayout {
+    private fun securityCard(): LinearLayout {
         val c = ui.card()
-        c.addView(ui.title("Supabase"))
-        c.addView(ui.muted("Tạo project Supabase (miễn phí), chạy tools/supabase_setup.sql trong SQL Editor, " +
-            "rồi dán Project URL + API key. Claude Code dùng cùng project + mật khẩu để gửi lệnh."))
-        c.addView(ui.label("Project URL"))
-        val fUrl = ui.field("https://xxxx.supabase.co", cfg.url); c.addView(fUrl)
-        c.addView(ui.label("Secret key (sb_secret_…) hoặc service_role"))
-        val fKey = ui.field("sb_secret_… hoặc eyJ…", cfg.key, password = true); c.addView(fKey)
-        c.addView(ui.label("Mật khẩu ký lệnh (chia sẻ với Claude Code)"))
-        val fPass = ui.field("ít nhất 6 ký tự", cfg.password, password = true); c.addView(fPass)
+        c.addView(ui.title("Mật khẩu & chế độ"))
+        c.addView(ui.label("Mật khẩu ký lệnh (≥${Config.MIN_PASSWORD} ký tự, chia sẻ với Claude Code)"))
+        val fPass = ui.field("bấm Tạo ngẫu nhiên", cfg.password, password = true); c.addView(fPass)
         c.addView(ui.button("Tạo mật khẩu ngẫu nhiên", primary = false) { fPass.setText(randomPass()) })
+
+        c.addView(Switch(this).apply {
+            text = "Đường hầm (khuyên dùng – không cần tài khoản)"; setTextColor(p.text); isChecked = cfg.tunnelEnabled
+            setOnCheckedChangeListener { _: CompoundButton, v: Boolean -> cfg.tunnelEnabled = v }
+            layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) }
+        })
+        c.addView(ui.label("Nhà cung cấp đường hầm"))
+        val chips = ui.row().apply { setPadding(0, dp(6), 0, 0) }
+        val chipViews = ArrayList<TextView>()
+        fun paint() = chipViews.forEachIndexed { i, tv ->
+            val on = Tunnel.Provider.ALL[i].id == Tunnel.Provider.of(cfg.provider).id
+            tv.setTextColor(if (on) p.onAccent else p.accent)
+            tv.background = GradientDrawable().apply {
+                cornerRadius = dp(16).toFloat()
+                if (on) setColor(p.accent) else setStroke(dp(1), p.accent)
+            }
+        }
+        Tunnel.Provider.ALL.forEach { pr ->
+            val tv = TextView(this).apply {
+                text = pr.label; textSize = 13f; setPadding(dp(14), dp(7), dp(14), dp(7))
+                setOnClickListener { cfg.provider = pr.id; paint() }
+            }
+            chipViews.add(tv)
+            chips.addView(tv, LinearLayout.LayoutParams(-2, -2).apply { rightMargin = dp(8) })
+        }
+        paint()
+        c.addView(chips)
+        c.addView(ui.muted("localhost.run là mặc định; serveo.net để dự phòng khi localhost.run lỗi."))
 
         c.addView(Switch(this).apply {
             text = "Cho phép mọi lệnh (kể cả ghi/nguy hiểm)"; setTextColor(p.text); isChecked = cfg.allowWrite
@@ -405,10 +453,32 @@ class MainActivity : Activity() {
             layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) }
         })
         c.addView(ui.muted("Áp dụng cho cả lệnh từ Claude Code lẫn lệnh gõ tay. Tắt = chỉ lệnh đọc."))
+        c.addView(ui.button("Lưu") {
+            val pw = fPass.text.toString()
+            if (pw.length < Config.MIN_PASSWORD) { toast("Mật khẩu cần ≥${Config.MIN_PASSWORD} ký tự"); return@button }
+            cfg.password = pw
+            toast(if (BridgeService.running) "Đã lưu – dừng rồi bật lại cầu nối để áp dụng" else "Đã lưu")
+            refreshStatus()
+        })
+        return c
+    }
+
+    private fun supabaseCard(): LinearLayout {
+        val c = ui.card()
+        c.addView(ui.title("Supabase (tuỳ chọn)"))
+        c.addView(Switch(this).apply {
+            text = "Nhận lệnh qua Supabase"; setTextColor(p.text); isChecked = cfg.supabaseEnabled
+            setOnCheckedChangeListener { _: CompoundButton, v: Boolean -> cfg.supabaseEnabled = v }
+        })
+        c.addView(ui.muted("Kênh dự phòng qua bảng mailbox (xem docs/SUPABASE.md). Không cần nếu dùng đường hầm."))
+        c.addView(ui.label("Project URL"))
+        val fUrl = ui.field("https://xxxx.supabase.co", cfg.url); c.addView(fUrl)
+        c.addView(ui.label("Secret key (sb_secret_…) hoặc service_role"))
+        val fKey = ui.field("sb_secret_… hoặc eyJ…", cfg.key, password = true); c.addView(fKey)
         val log = ui.muted("")
-        c.addView(ui.button("Lưu & kiểm tra") {
-            cfg.url = fUrl.text.toString(); cfg.key = fKey.text.toString(); cfg.password = fPass.text.toString()
-            if (!cfg.ready) { toast("Thiếu URL/key hoặc mật khẩu <6"); return@button }
+        c.addView(ui.button("Lưu & kiểm tra", primary = false) {
+            cfg.url = fUrl.text.toString(); cfg.key = fKey.text.toString()
+            if (!cfg.supabaseReady) { toast("Thiếu URL hoặc key"); return@button }
             log.text = "Đang kiểm tra…"
             io.execute {
                 val err = cfg.bridge().check()
@@ -420,23 +490,16 @@ class MainActivity : Activity() {
     }
 
     /** Khối biến môi trường dán sẵn cho phía Claude Code. */
-    private fun claudeCard(): LinearLayout {
-        val c = ui.card()
-        c.addView(ui.title("Cấu hình cho Claude Code"))
-        c.addView(ui.muted("Sao chép rồi dán vào máy chạy Claude Code (hoặc biến môi trường của phiên cloud). " +
-            "Sau đó: python3 tools/bridge.py exec \"dumpsys battery\""))
-        c.addView(ui.button("Sao chép biến môi trường", primary = false) {
-            if (!cfg.ready) { toast("Lưu cấu hình Supabase trước"); return@button }
-            copy(envBlock()); toast("Đã sao chép (có chứa key + mật khẩu)")
-        })
-        return c
+    private fun envBlock(): String {
+        val sb = StringBuilder()
+        BridgeService.tunnelUrl?.let { sb.append("export BRIDGE_URL='$it'\n") }
+        sb.append("export BRIDGE_PASSWORD='${cfg.password}'\n")
+        if (cfg.supabaseEnabled && cfg.supabaseReady) {
+            sb.append("export BRIDGE_SUPABASE_URL='${cfg.url}'\n")
+            sb.append("export BRIDGE_SUPABASE_KEY='${cfg.key}'\n")
+        }
+        return sb.toString().trimEnd()
     }
-
-    private fun envBlock() = """
-        export BRIDGE_SUPABASE_URL='${cfg.url}'
-        export BRIDGE_SUPABASE_KEY='${cfg.key}'
-        export BRIDGE_PASSWORD='${cfg.password}'
-    """.trimIndent()
 
     // ───────────────────────── tiện ích ─────────────────────────
 
