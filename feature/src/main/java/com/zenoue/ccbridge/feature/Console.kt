@@ -1,4 +1,4 @@
-package com.zenoue.ccbridge
+package com.zenoue.ccbridge.feature
 
 /**
  * Cửa sổ lệnh dùng chung cho tab CLI: lệnh gõ tay và lệnh Claude Code gửi đến

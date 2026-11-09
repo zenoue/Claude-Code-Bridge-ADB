@@ -1,4 +1,4 @@
-package com.zenoue.ccbridge
+package com.zenoue.ccbridge.feature
 
 import android.content.Context
 import android.content.res.Configuration

@@ -28,6 +28,14 @@
             </intent-filter>
         </activity>
 
+        <!-- tiến trình riêng: giết tiến trình chính rồi mở lại app để nạp feature.dex mới -->
+        <activity
+            android:name=".RestartActivity"
+            android:exported="false"
+            android:process=":restart"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
         <service
             android:name=".BridgeService"
             android:exported="false"

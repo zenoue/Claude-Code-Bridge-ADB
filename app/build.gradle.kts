@@ -13,7 +13,9 @@ android {
         targetSdk = 34
         versionCode = (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1)
         versionName = "1.0." + (System.getenv("GITHUB_RUN_NUMBER") ?: "0")
+        buildConfigField("String", "GITHUB_REPO", "\"zenoue/Claude-Code-Bridge-ADB\"")
     }
+    buildFeatures { buildConfig = true }
 
     signingConfigs {
         getByName("debug") {
@@ -50,6 +52,11 @@ android {
 }
 
 dependencies {
+    // Hợp đồng với feature.dex (chức năng tự cập nhật). KHÔNG phụ thuộc :feature – lớp của feature
+    // phải nằm ngoài APK để bản tải từ GitHub được nạp thay vì bản cũ.
+    implementation(project(":api"))
+
+    // Các thư viện dưới đây do feature.dex dùng lúc chạy -> APK phải mang theo (đổi = cài APK mới).
     // ADB client chạy ngay trong app (giao thức ADB + ghép nối không dây)
     implementation("com.github.MuntashirAkon:libadb-android:3.1.1")
     // TLS 1.3 + export keying material cho ghép nối cùng máy
@@ -61,6 +68,25 @@ dependencies {
     implementation("com.github.mwiede:jsch:2.28.8")
 
     testImplementation("junit:junit:4.13.2")
-    // org.json trong android.jar chỉ là stub -> dùng bản thật cho unit test
-    testImplementation("org.json:json:20240303")
+}
+
+/** Đóng feature.dex + feature.json (bản dự phòng đi kèm APK) vào assets. */
+abstract class FeatureAssets : DefaultTask() {
+    @get:InputFiles abstract val source: ConfigurableFileCollection
+    @get:OutputDirectory abstract val outputDir: DirectoryProperty
+
+    @TaskAction fun copy() {
+        val out = outputDir.get().asFile
+        out.deleteRecursively(); out.mkdirs()
+        source.asFileTree.forEach { it.copyTo(File(out, it.name)) }
+    }
+}
+
+val featureAssets = tasks.register<FeatureAssets>("featureAssets") {
+    dependsOn(":feature:featureDex")
+    source.from(project(":feature").layout.buildDirectory.dir("outputs/feature"))
+}
+
+androidComponents {
+    onVariants { v -> v.sources.assets?.addGeneratedSourceDirectory(featureAssets, FeatureAssets::outputDir) }
 }

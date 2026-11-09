@@ -1,4 +1,4 @@
-package com.zenoue.ccbridge
+package com.zenoue.ccbridge.feature
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse

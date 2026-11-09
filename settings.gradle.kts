@@ -14,4 +14,4 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "ClaudeCodeBridgeADB"
-include(":app")
+include(":app", ":api", ":feature")

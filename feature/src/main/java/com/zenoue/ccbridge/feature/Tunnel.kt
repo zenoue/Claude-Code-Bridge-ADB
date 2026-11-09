@@ -1,4 +1,4 @@
-package com.zenoue.ccbridge
+package com.zenoue.ccbridge.feature
 
 import com.jcraft.jsch.Channel
 import com.jcraft.jsch.ChannelExec

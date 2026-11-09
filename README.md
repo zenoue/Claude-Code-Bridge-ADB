@@ -19,6 +19,27 @@ lấy từ [zenoue/Debug_unroot](https://github.com/zenoue/Debug_unroot).
 | **CLI** | Gõ lệnh `adb shell` và xem kết quả (kèm exit code). Lệnh Claude Code gửi đến cũng hiện ở đây với tiền tố `claude$`. Có lệnh nhanh, gọi lại lệnh trước, sao chép/xoá nhật ký. |
 | **Connect** | Bật/tắt cầu nối, xem địa chỉ đường hầm · Ghép nối & kết nối **Gỡ lỗi không dây** · Đổi khoá địa chỉ, chế độ chỉ-đọc · **Sao chép cho Claude Code**. |
 
+## Tự cập nhật chức năng (không cần cài lại APK)
+
+Toàn bộ chức năng (giao diện, ADB không dây, đường hầm, lệnh) nằm trong `feature.dex`, tách khỏi APK:
+
+```
+APK (cài một lần)                         GitHub Releases (mỗi lần push)
+├─ vỏ MainActivity / BridgeService  ◀──── releases/latest/download/feature.json  {version, api, sha256, tag}
+├─ FeatureHost: nạp + cập nhật      ◀──── releases/download/v1.0.N/feature.dex
+├─ thư viện: libadb, jsch, BC, …
+└─ assets/feature.dex (bản dự phòng)
+```
+
+- App kiểm tra khi mở, khi bật cầu nối và mỗi 30 phút; tải bản mới, kiểm SHA‑256, lưu read‑only
+  (bắt buộc từ Android 14). Bấm **Áp dụng ngay** (Connect → *Cập nhật chức năng*) để khởi động lại app;
+  cầu nối đang bật sẽ tự bật lại (địa chỉ đường hầm có thể đổi).
+- Giao diện dựng bằng code (không XML, không WebView) nên cập nhật được cả giao diện qua `DexClassLoader`.
+- Bản tải về gây lỗi → tự đánh dấu hỏng, quay về bản đi kèm APK; có nút *Quay về bản đi kèm APK*.
+- **Vẫn phải cài APK mới** khi đổi: `app/` (manifest, quyền, icon, thư viện), hoặc `api/` (`API_VERSION`).
+  Ghi chú release ghi rõ có cần cài APK hay không.
+- Tin cậy: bản tải về đến từ cùng repo và cùng CI với APK, qua HTTPS, kiểm SHA‑256 – ngang mức tin cậy của file APK.
+
 ## Thiết lập (3 phút, chỉ trên điện thoại)
 
 1. Vào [**Releases**](../../releases/latest) → tải `CCBridgeADB-v1.0.N.apk` → cài (cài đè được bản cũ).
@@ -85,8 +106,8 @@ Chỉ cần Python 3 (thư viện chuẩn). Xem thêm [`CLAUDE.md`](CLAUDE.md).
 
 ```bash
 ./gradlew testDebugUnitTest   # test bộ lọc lệnh, exit code, console, giao thức HTTP + khoá, đọc địa chỉ đường hầm
-./gradlew assembleDebug       # cần Android SDK (compileSdk 35), JDK 17
+./gradlew assembleDebug       # APK + feature/build/outputs/feature/{feature.dex,feature.json}; cần Android SDK 35, JDK 17
 ```
 
-Mỗi lần push lên `main_1`, GitHub Actions build APK và tạo release `v1.0.N`; ghi chú release liệt kê
-vắn tắt các commit kể từ bản trước.
+Mỗi lần push lên `main_1`, GitHub Actions build APK + `feature.dex` và tạo release `v1.0.N`; ghi chú release
+liệt kê vắn tắt các commit kể từ bản trước và cho biết có cần cài lại APK không.

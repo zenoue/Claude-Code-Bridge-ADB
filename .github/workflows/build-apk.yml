@@ -33,10 +33,13 @@ jobs:
       - name: Build APK
         run: ./gradlew --no-daemon assembleDebug
 
-      - name: Rename APK
+      # feature.dex + feature.json: app tải về qua releases/latest/download/feature.json để tự cập nhật chức năng
+      - name: Collect files
         run: |
           mkdir -p out
           cp app/build/outputs/apk/debug/app-debug.apk "out/CCBridgeADB-v1.0.${{ github.run_number }}.apk"
+          cp feature/build/outputs/feature/feature.dex feature/build/outputs/feature/feature.json out/
+          cat out/feature.json
 
       # Ghi chú vắn tắt: tiêu đề các commit kể từ bản phát hành trước.
       - name: Release notes
@@ -50,14 +53,18 @@ jobs:
               git log --no-merges --pretty='- %s' -n 20
             fi
             echo
-            echo "Tải file \`.apk\` bên dưới về điện thoại và cài (cài đè được bản cũ)."
+            if [ -n "$PREV" ] && git diff --quiet "$PREV" HEAD -- app api build.gradle.kts settings.gradle.kts gradle; then
+              echo "**Chỉ đổi chức năng** – app tự cập nhật (Connect → Cập nhật chức năng), không cần cài lại APK."
+            else
+              echo "**Có thay đổi phần vỏ APK** – tải file \`.apk\` bên dưới về điện thoại và cài (cài đè được bản cũ)."
+            fi
           } > notes.md
           cat notes.md
 
       - uses: actions/upload-artifact@v4
         with:
           name: CCBridgeADB-apk
-          path: out/*.apk
+          path: out/*
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
@@ -67,4 +74,7 @@ jobs:
           target_commitish: ${{ github.sha }}
           make_latest: true
           body_path: notes.md
-          files: out/*.apk
+          files: |
+            out/*.apk
+            out/feature.dex
+            out/feature.json

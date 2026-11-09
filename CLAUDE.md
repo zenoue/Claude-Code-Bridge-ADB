@@ -21,7 +21,15 @@ python3 tools/bridge.py exec "logcat -d -t 200 *:E"
 
 ## Phát triển
 
-- Kotlin, không dùng AndroidX/Compose; UI dựng bằng code (`UiKit.kt`). Package `com.zenoue.ccbridge`.
-- Chỉ dùng nhánh `main_1`. Mỗi push → CI build APK + release `v1.0.N`, ghi chú = tiêu đề commit,
-  nên viết tiêu đề commit ngắn gọn, mô tả thay đổi cho người dùng.
-- Test: `./gradlew testDebugUnitTest`.
+- Kotlin, không dùng AndroidX/Compose; UI dựng bằng code (`UiKit.kt`). Không dùng file tài nguyên trong `feature/`.
+- 3 module:
+  - `feature/` (package `com.zenoue.ccbridge.feature`): **toàn bộ chức năng** – giao diện, ADB không dây, đường hầm, lệnh.
+    Build thành `feature.dex`; app **tự tải từ GitHub Releases**, người dùng không cần cài lại APK.
+  - `app/` (package `com.zenoue.ccbridge`): vỏ APK – Activity/Service chuyển tiếp, nạp & cập nhật feature (`FeatureHost.kt`),
+    manifest, icon, thư viện (libadb, jsch, bouncycastle, conscrypt). Đổi ở đây = người dùng phải cài APK mới.
+  - `api/`: hợp đồng giữa hai bên (`Api.kt`). Đổi chữ ký nào → **tăng `API_VERSION`** (bản cũ sẽ báo cần APK mới).
+- Ưu tiên sửa trong `feature/`. Cần thư viện mới, quyền mới, tài nguyên mới → phải sửa `app/` (cần APK mới).
+  `feature` chỉ `compileOnly` thư viện; thư viện đó phải có trong `app` (`implementation`).
+- Chỉ dùng nhánh `main_1`. Mỗi push → CI build APK + `feature.dex`/`feature.json`, release `v1.0.N`,
+  ghi chú = tiêu đề commit (viết ngắn gọn, mô tả cho người dùng) + dòng báo có cần cài APK hay không.
+- Test: `./gradlew testDebugUnitTest` (test nằm ở `feature/src/test`).
