@@ -32,6 +32,8 @@ class Config(private val ctx: Context) {
     var adbHost: String get() = sp.getString("adbHost", "127.0.0.1") ?: "127.0.0.1"; set(v) = put("adbHost", v.trim().ifEmpty { "127.0.0.1" })
     var adbPort: Int get() = sp.getInt("adbPort", 0); set(v) = sp.edit().putInt("adbPort", v).apply()
     var paired: Boolean get() = sp.getBoolean("paired", false); set(v) = sp.edit().putBoolean("paired", v).apply()
+    /** Đã bật chế độ cổng TCP 5555 (không cần Wi‑Fi) – app ưu tiên nối 127.0.0.1:5555. */
+    var tcpMode: Boolean get() = sp.getBoolean("tcpMode", false); set(v) = sp.edit().putBoolean("tcpMode", v).apply()
 
     private fun put(k: String, v: String) = sp.edit().putString(k, v).apply()
 

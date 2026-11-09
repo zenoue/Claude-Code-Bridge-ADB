@@ -36,6 +36,8 @@ class AdbManager private constructor(ctx: Context) : AbsAdbConnectionManager() {
 
     init {
         setApi(Build.VERSION.SDK_INT)
+        // mặc định libadb chờ vô hạn; đủ lâu để người dùng bấm "Cho phép gỡ lỗi USB?" khi nối cổng TCP lần đầu
+        setTimeout(90, java.util.concurrent.TimeUnit.SECONDS)
         val keyFile = File(ctx.filesDir, "adb_key.pk8")
         val certFile = File(ctx.filesDir, "adb_cert.der")
         if (keyFile.exists() && certFile.exists()) {
@@ -77,6 +79,11 @@ object Adb {
 
     @Volatile var connected = false; private set
     @Volatile var lastError: String? = null; private set
+    /** Kiểu kết nối hiện tại: "không dây (TLS)" hoặc "TCP 5555 (không cần Wi‑Fi)". */
+    @Volatile var mode: String = ""; private set
+
+    /** Cổng TCP cổ điển (như `adb tcpip 5555`) – dùng được khi không có Wi‑Fi. */
+    const val TCP_PORT = 5555
 
     fun isConnected(ctx: Context): Boolean = try {
         AdbManager.get(ctx).isConnected.also { connected = it }
@@ -90,8 +97,8 @@ object Adb {
     /** Kết nối tới adbd (đã ghép nối). */
     fun connect(ctx: Context, host: String, port: Int): Boolean = try {
         connected = AdbManager.get(ctx).connect(host, port)
-        if (!connected) lastError = "adbd từ chối (chưa ghép nối hoặc sai cổng)"
-        else lastError = null
+        if (!connected) lastError = "adbd từ chối (chưa ghép nối, sai cổng hoặc chưa bấm Cho phép)"
+        else { lastError = null; mode = if (port == TCP_PORT) "TCP $TCP_PORT (không cần Wi‑Fi)" else "không dây (TLS)" }
         connected
     } catch (t: Throwable) { lastError = t.message ?: t.toString(); connected = false; false }
 
@@ -99,12 +106,51 @@ object Adb {
     fun autoConnect(ctx: Context, timeoutMs: Long = 8000): Boolean = try {
         connected = AdbManager.get(ctx).connectTls(ctx, timeoutMs)
         lastError = if (connected) null else "không tìm thấy adbd qua mDNS"
+        if (connected) mode = "không dây (TLS)"
         connected
     } catch (t: Throwable) { lastError = t.message ?: t.toString(); connected = false; false }
 
     fun disconnect(ctx: Context) {
         try { AdbManager.get(ctx).disconnect() } catch (_: Throwable) { }
-        connected = false
+        connected = false; mode = ""
+    }
+
+    /** adbd có đang nghe cổng TCP cổ điển trên máy không (kiểm tra nhanh, không xác thực). */
+    fun tcpPortOpen(port: Int = TCP_PORT): Boolean = try {
+        java.net.Socket().use { it.connect(java.net.InetSocketAddress("127.0.0.1", port), 600); true }
+    } catch (_: Throwable) { false }
+
+    /**
+     * Như `adb tcpip <port>`: adbd khởi động lại và nghe thêm cổng TCP thường. Cổng này nằm trên chính máy
+     * (127.0.0.1) nên không cần Wi‑Fi – tắt Wi‑Fi/dùng 4G vẫn nối được, cho tới khi khởi động lại điện thoại.
+     * Kết nối hiện tại sẽ rớt (adbd khởi động lại). Trả thông báo của adbd.
+     */
+    fun enableTcpip(ctx: Context, port: Int = TCP_PORT): String = restartService(ctx, "tcpip:$port")
+
+    /** Như `adb usb`: adbd bỏ cổng TCP cổ điển (Gỡ lỗi không dây qua Wi‑Fi vẫn dùng được). */
+    fun disableTcpip(ctx: Context): String = restartService(ctx, "usb:")
+
+    private fun restartService(ctx: Context, service: String): String {
+        val st = AdbManager.get(ctx).openStream(service)
+        val killer = timer.schedule({ try { st.close() } catch (_: Throwable) { } }, 5, java.util.concurrent.TimeUnit.SECONDS)
+        val msg = try {
+            st.openInputStream().bufferedReader().readText().trim()
+        } catch (_: Throwable) { "" } finally {
+            killer.cancel(false)
+            try { st.close() } catch (_: Throwable) { }
+        }
+        disconnect(ctx)
+        return msg.ifEmpty { "(adbd không phản hồi – có thể đã khởi động lại)" }
+    }
+
+    /** Nối 127.0.0.1:<port>, thử lại vài lần trong lúc adbd khởi động lại. */
+    fun connectTcp(ctx: Context, port: Int = TCP_PORT, attempts: Int = 8): Boolean {
+        repeat(attempts) {
+            if (tcpPortOpen(port) && connect(ctx, "127.0.0.1", port)) return true
+            Thread.sleep(1000)
+        }
+        if (lastError == null || !tcpPortOpen(port)) lastError = "cổng $port chưa mở (bấm \"Bật ADB không cần Wi‑Fi\" khi đang có Wi‑Fi)"
+        return false
     }
 
     /** Mở `adb shell <cmd>` và trả stream để đọc dần (dùng cho logcat). */

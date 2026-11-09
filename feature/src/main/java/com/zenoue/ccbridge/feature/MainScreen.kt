@@ -98,6 +98,13 @@ class MainScreen(private val activity: Activity) : ContextWrapper(activity), Act
         Console.onChange = { main.post { if (tab == TAB_CLI) appendNewConsole() } }
         BridgeCore.onStatus = { main.post { refreshStatus() } }
         selectTab(if (Adb.isConnected(this)) TAB_CLI else TAB_CONNECT)
+        // đã bật cổng 5555 trước đó: tự nối lại khi mở app (không cần Wi‑Fi)
+        if (!Adb.isConnected(this) && cfg.tcpMode) io.execute {
+            if (Adb.tcpPortOpen() && Adb.connect(this, "127.0.0.1", Adb.TCP_PORT)) main.post {
+                Console.info("ADB kết nối 127.0.0.1:${Adb.TCP_PORT} (không cần Wi‑Fi)")
+                selectTab(TAB_CLI)
+            }
+        }
     }
 
     override fun onResume() {
@@ -350,7 +357,7 @@ class MainScreen(private val activity: Activity) : ContextWrapper(activity), Act
     }
 
     private fun adbStateText() =
-        if (Adb.isConnected(this)) "Đã kết nối" else if (cfg.paired) "Đã ghép nối" else "Chưa ghép nối"
+        if (Adb.isConnected(this)) "Đã kết nối · ${Adb.mode}" else if (cfg.paired) "Đã ghép nối" else "Chưa ghép nối"
 
     private fun adbCard(): LinearLayout {
         val c = ui.card()
@@ -412,10 +419,82 @@ class MainScreen(private val activity: Activity) : ContextWrapper(activity), Act
             Adb.disconnect(this); selectTab(TAB_CONNECT)
         })
         c.addView(conLog)
+        noWifiSection(c)
         c.addView(ui.button("Mở Tuỳ chọn nhà phát triển", primary = false) {
             try { startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)) } catch (_: Exception) { toast("Không mở được") }
         })
         return c
+    }
+
+    /**
+     * Gỡ lỗi không cần Wi‑Fi: Android (kể cả 17, ADB Wi‑Fi 2.0) chỉ bật Gỡ lỗi không dây khi đang nối Wi‑Fi
+     * và tự tắt khi rời mạng. Trong lúc đang có kết nối ADB, gửi `tcpip:5555` để adbd mở thêm cổng TCP thường
+     * trên máy; sau đó nối 127.0.0.1:5555 – không phụ thuộc Wi‑Fi, giữ tới khi khởi động lại điện thoại.
+     */
+    private fun noWifiSection(c: LinearLayout) {
+        c.addView(ui.divider())
+        c.addView(ui.label("Gỡ lỗi không cần Wi‑Fi (Android 11–17)"))
+        c.addView(ui.muted("Android chỉ bật Gỡ lỗi không dây khi đang nối Wi‑Fi. Bấm \"Bật\" một lần khi ADB đang kết nối: " +
+            "adbd mở thêm cổng ${Adb.TCP_PORT} ngay trên máy, sau đó tắt Wi‑Fi / chỉ dùng 4G vẫn kết nối được " +
+            "cho tới khi khởi động lại điện thoại. Lần đầu máy hỏi \"Cho phép gỡ lỗi USB?\" → tích Luôn cho phép → Cho phép."))
+        // kiểm tra cổng ở luồng nền (socket trên luồng UI -> NetworkOnMainThreadException)
+        val portLabel = ui.body("Cổng ${Adb.TCP_PORT}: đang kiểm tra…", p.muted, 13f)
+        c.addView(portLabel)
+        io.execute {
+            val open = Adb.tcpPortOpen()
+            main.post {
+                portLabel.text = "Cổng ${Adb.TCP_PORT}: " + if (open) "đang mở" else "đóng"
+                portLabel.setTextColor(if (open) p.accent else p.muted)
+            }
+        }
+        val log = ui.muted("")
+
+        c.addView(ui.button("Bật ADB không cần Wi‑Fi", primary = Adb.isConnected(this) && !cfg.tcpMode) {
+            if (!Adb.isConnected(this)) { toast("Cần kết nối ADB trước (Bước 1–2, đang có Wi‑Fi)"); return@button }
+            log.text = "Đang chuyển adbd sang cổng ${Adb.TCP_PORT}…"
+            io.execute {
+                val msg = try { Adb.enableTcpip(this) } catch (t: Throwable) { "✗ ${t.message ?: t}" }
+                Console.info("adbd: $msg")
+                main.post { log.text = "$msg\nĐang nối 127.0.0.1:${Adb.TCP_PORT} – nếu máy hỏi, bấm Cho phép…" }
+                Thread.sleep(1500)
+                val ok = Adb.connectTcp(this)
+                if (ok) cfg.tcpMode = true
+                main.post {
+                    log.text = if (ok) "✓ Đã kết nối qua cổng ${Adb.TCP_PORT} – giờ có thể tắt Wi‑Fi" else "✗ ${Adb.lastError}"
+                    if (ok) Console.info("ADB kết nối 127.0.0.1:${Adb.TCP_PORT} (không cần Wi‑Fi)")
+                    else {
+                        // không nối được cổng TCP -> quay lại Gỡ lỗi không dây nếu còn
+                        if (cfg.adbPort > 0) io.execute { Adb.connect(this, "127.0.0.1", cfg.adbPort); main.post { refreshStatus() } }
+                    }
+                    refreshStatus()
+                }
+            }
+        })
+        c.addView(ui.button("Kết nối không cần Wi‑Fi (127.0.0.1:${Adb.TCP_PORT})", primary = false) {
+            log.text = "Đang nối 127.0.0.1:${Adb.TCP_PORT}…"
+            io.execute {
+                if (Adb.isConnected(this)) Adb.disconnect(this)
+                val ok = Adb.connectTcp(this, attempts = 2)
+                if (ok) cfg.tcpMode = true
+                main.post {
+                    log.text = if (ok) "✓ Đã kết nối qua cổng ${Adb.TCP_PORT}" else "✗ ${Adb.lastError}"
+                    if (ok) Console.info("ADB kết nối 127.0.0.1:${Adb.TCP_PORT} (không cần Wi‑Fi)")
+                    refreshStatus()
+                }
+            }
+        })
+        if (cfg.tcpMode) c.addView(ui.button("Tắt cổng ${Adb.TCP_PORT}", primary = false) {
+            cfg.tcpMode = false
+            if (!Adb.isConnected(this)) { toast("Đã tắt tự nối cổng ${Adb.TCP_PORT}; cổng đóng khi khởi động lại máy"); selectTab(TAB_CONNECT); return@button }
+            io.execute {
+                val msg = try { Adb.disableTcpip(this) } catch (t: Throwable) { "✗ ${t.message ?: t}" }
+                Console.info("adbd: $msg")
+                main.post { toast("Đã tắt cổng ${Adb.TCP_PORT} – nối lại bằng Gỡ lỗi không dây"); selectTab(TAB_CONNECT) }
+            }
+        })
+        c.addView(log)
+        c.addView(ui.muted("Cổng ${Adb.TCP_PORT} nghe trên mọi mạng của máy; máy lạ vẫn phải được bạn bấm Cho phép mới vào được. " +
+            "Tắt cổng khi dùng Wi‑Fi công cộng."))
     }
 
     private fun tunnelCard(): LinearLayout {

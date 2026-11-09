@@ -98,7 +98,10 @@ Chỉ cần Python 3 (thư viện chuẩn). Xem thêm [`CLAUDE.md`](CLAUDE.md).
 ## Giới hạn
 
 - Địa chỉ đường hầm miễn phí có thể đổi khi nối lại (mất mạng, đổi Wi‑Fi/4G) → bấm *Sao chép cho Claude Code* lại.
-- Gỡ lỗi không dây cần đang nối Wi‑Fi (mạng không có internet cũng được; internet đi qua 4G).
+- Gỡ lỗi không dây cần đang nối Wi‑Fi (mạng không có internet cũng được; internet đi qua 4G) – kể cả Android 17
+  (ADB Wi‑Fi 2.0 còn tự tắt khi rời mạng tin cậy). **Không có Wi‑Fi**: khi ADB đang kết nối, bấm
+  *Bật ADB không cần Wi‑Fi* (tab Connect) → adbd mở cổng `5555` trên máy (như `adb tcpip 5555`), app nối
+  `127.0.0.1:5555`; sau đó tắt Wi‑Fi/chỉ dùng 4G vẫn chạy, tới khi khởi động lại điện thoại (lần đầu bấm *Cho phép gỡ lỗi USB*).
 - Cổng kết nối ADB đổi sau mỗi lần tắt/bật Gỡ lỗi không dây hoặc khởi động lại → nhập lại Bước 2.
 - Mỗi lệnh tối đa ~10 phút (`BRIDGE_TIMEOUT`); lệnh không tự kết thúc dùng `bridge.py logcat`.
 

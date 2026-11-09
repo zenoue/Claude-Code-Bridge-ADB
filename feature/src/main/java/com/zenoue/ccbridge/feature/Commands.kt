@@ -16,7 +16,7 @@ object Commands {
         return when (type) {
             "ping" -> {
                 Console.info("claude ping")
-                HttpApi.Reply(0, "pong · ADB=${Adb.isConnected(ctx)} · ${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE} · chỉ-đọc=${!cfg.allowWrite}" +
+                HttpApi.Reply(0, "pong · ADB=${Adb.isConnected(ctx)}${if (Adb.connected) " (" + Adb.mode + ")" else ""} · ${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE} · chỉ-đọc=${!cfg.allowWrite}" +
                     (if (Host.ready) " · chức năng v1.0.${Host.api.featureVersion} (${Host.api.featureSource})" else ""))
             }
             "logcat_start" -> {

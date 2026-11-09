@@ -80,6 +80,10 @@ class BridgeCore(private val svc: Service) : ContextWrapper(svc), ServiceDelegat
 
     private fun tryConnectAdb(cfg: Config) {
         if (Adb.isConnected(this)) return
+        // cổng 5555 (không cần Wi‑Fi) trước, rồi mới tới Gỡ lỗi không dây
+        if (cfg.tcpMode && Adb.tcpPortOpen() && Adb.connect(this, "127.0.0.1", Adb.TCP_PORT)) {
+            Console.info("ADB kết nối 127.0.0.1:${Adb.TCP_PORT} (không cần Wi‑Fi)"); return
+        }
         if (!cfg.paired || cfg.adbPort <= 0) return
         if (Adb.connect(this, cfg.adbHost, cfg.adbPort)) Console.info("ADB kết nối ${cfg.adbHost}:${cfg.adbPort}")
     }
