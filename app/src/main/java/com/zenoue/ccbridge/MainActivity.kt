@@ -25,13 +25,12 @@ import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
-import java.security.SecureRandom
 import java.util.concurrent.Executors
 
 /**
  * Hai tab:
  *  - CLI: gõ lệnh adb shell và xem kết quả; lệnh Claude Code gửi đến (qua đường hầm) cũng hiện ở đây.
- *  - Connect: kết nối Gỡ lỗi không dây (ADB trong app), mở đường hầm, bật/tắt cầu nối.
+ *  - Connect: kết nối Gỡ lỗi không dây (ADB trong app), mở đường hầm, bật/tắt cầu nối (không mật khẩu).
  */
 class MainActivity : Activity() {
 
@@ -97,7 +96,7 @@ class MainActivity : Activity() {
 
         Console.onChange = { main.post { if (tab == TAB_CLI) appendNewConsole() } }
         BridgeService.onStatus = { main.post { refreshStatus() } }
-        selectTab(if (cfg.ready && Adb.isConnected(this)) TAB_CLI else TAB_CONNECT)
+        selectTab(if (Adb.isConnected(this)) TAB_CLI else TAB_CONNECT)
     }
 
     override fun onResume() { super.onResume(); refreshStatus() }
@@ -296,14 +295,17 @@ class MainActivity : Activity() {
         sv.addView(col)
         col.addView(bridgeCard())
         col.addView(adbCard())
-        col.addView(securityCard())
+        col.addView(tunnelCard())
         return sv
     }
 
-    private fun tunnelText(): String = when {
-        !BridgeService.running -> "Bấm \"Bắt đầu cầu nối\" để mở đường hầm"
-        BridgeService.tunnelUrl != null -> BridgeService.tunnelUrl!!
-        else -> BridgeService.tunnelState.ifEmpty { "Đang mở đường hầm…" }
+    private fun tunnelText(): String {
+        val st = BridgeService.tunnel
+        return when {
+            !BridgeService.running -> "Bấm \"Bắt đầu cầu nối\" để mở đường hầm"
+            st?.url != null -> "${st.url}\n${st.provider?.label ?: ""}"
+            else -> st?.message ?: "Đang mở đường hầm…"
+        }
     }
 
     private fun bridgeCard(): LinearLayout {
@@ -320,7 +322,6 @@ class MainActivity : Activity() {
         c.addView(ui.button(if (BridgeService.running) "Dừng cầu nối" else "Bắt đầu cầu nối", !BridgeService.running) {
             if (BridgeService.running) BridgeService.stop(this)
             else {
-                if (!cfg.ready) { toast("Đặt mật khẩu ≥${Config.MIN_PASSWORD} ký tự ở thẻ Mật khẩu & chế độ"); return@button }
                 if (Build.VERSION.SDK_INT >= 33 &&
                     checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
                 ) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
@@ -329,13 +330,12 @@ class MainActivity : Activity() {
             main.postDelayed({ if (tab == TAB_CONNECT) selectTab(TAB_CONNECT) }, 600)
         })
         c.addView(ui.button("Sao chép cho Claude Code", primary = false) {
-            if (!cfg.ready) { toast("Chưa có mật khẩu"); return@button }
-            if (BridgeService.tunnelUrl == null) {
-                toast("Chưa có địa chỉ đường hầm – bắt đầu cầu nối trước"); return@button
-            }
-            copy(envBlock()); toast("Đã sao chép (có chứa mật khẩu)")
+            val url = BridgeService.bridgeUrl(cfg)
+            if (url == null) { toast("Chưa có địa chỉ đường hầm – bắt đầu cầu nối trước"); return@button }
+            copy("export BRIDGE_URL='$url'"); toast("Đã sao chép địa chỉ")
         })
         c.addView(ui.muted("Dán vào terminal của Claude Code rồi chạy: python3 tools/bridge.py ping. " +
+            "Không cần mật khẩu: địa chỉ đã kèm khoá ngẫu nhiên, đừng chia sẻ công khai. " +
             "Địa chỉ có thể đổi khi đường hầm nối lại – khi đó sao chép lại."))
         return c
     }
@@ -409,35 +409,44 @@ class MainActivity : Activity() {
         return c
     }
 
-    private fun securityCard(): LinearLayout {
+    private fun tunnelCard(): LinearLayout {
         val c = ui.card()
-        c.addView(ui.title("Mật khẩu & chế độ"))
-        c.addView(ui.label("Mật khẩu ký lệnh (≥${Config.MIN_PASSWORD} ký tự, chia sẻ với Claude Code)"))
-        val fPass = ui.field("bấm Tạo ngẫu nhiên", cfg.password, password = true); c.addView(fPass)
-        c.addView(ui.button("Tạo mật khẩu ngẫu nhiên", primary = false) { fPass.setText(randomPass()) })
-
+        c.addView(ui.title("Đường hầm & chế độ"))
         c.addView(ui.label("Nhà cung cấp đường hầm"))
+        val options = listOf(Tunnel.Provider.AUTO to "Tự động") + Tunnel.Provider.ALL.map { it.id to it.label }
         val chips = ui.row().apply { setPadding(0, dp(6), 0, 0) }
         val chipViews = ArrayList<TextView>()
         fun paint() = chipViews.forEachIndexed { i, tv ->
-            val on = Tunnel.Provider.ALL[i].id == Tunnel.Provider.of(cfg.provider).id
+            val on = options[i].first == cfg.provider ||
+                (i == 0 && Tunnel.Provider.ALL.none { it.id == cfg.provider })
             tv.setTextColor(if (on) p.onAccent else p.accent)
             tv.background = GradientDrawable().apply {
                 cornerRadius = dp(16).toFloat()
                 if (on) setColor(p.accent) else setStroke(dp(1), p.accent)
             }
         }
-        Tunnel.Provider.ALL.forEach { pr ->
+        options.forEach { (id, label) ->
             val tv = TextView(this).apply {
-                text = pr.label; textSize = 13f; setPadding(dp(14), dp(7), dp(14), dp(7))
-                setOnClickListener { cfg.provider = pr.id; paint() }
+                text = label; textSize = 13f; setPadding(dp(14), dp(7), dp(14), dp(7))
+                setOnClickListener {
+                    if (cfg.provider == id) return@setOnClickListener
+                    cfg.provider = id; paint()
+                    if (BridgeService.running) { toast("Đang nối lại với ${label}…"); BridgeService.reconnect(this@MainActivity) }
+                }
             }
             chipViews.add(tv)
             chips.addView(tv, LinearLayout.LayoutParams(-2, -2).apply { rightMargin = dp(8) })
         }
         paint()
-        c.addView(chips)
-        c.addView(ui.muted("localhost.run là mặc định; serveo.net để dự phòng khi localhost.run lỗi."))
+        c.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(chips) })
+        c.addView(ui.muted("Tự động: thử localhost.run → Pinggy → serveo.net, nhà nào lỗi liên tục thì chuyển nhà kế. " +
+            "App tự kiểm tra địa chỉ mỗi 45 giây và nối lại ngay khi đổi Wi‑Fi/4G."))
+
+        c.addView(ui.button("Đổi khoá trong địa chỉ", primary = false) {
+            cfg.newUrlKey()
+            toast("Đã đổi khoá – địa chỉ cũ hết hiệu lực, hãy sao chép lại")
+            refreshStatus()
+        })
 
         c.addView(Switch(this).apply {
             text = "Cho phép mọi lệnh (kể cả ghi/nguy hiểm)"; setTextColor(p.text); isChecked = cfg.allowWrite
@@ -445,30 +454,10 @@ class MainActivity : Activity() {
             layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) }
         })
         c.addView(ui.muted("Áp dụng cho cả lệnh từ Claude Code lẫn lệnh gõ tay. Tắt = chỉ lệnh đọc."))
-        c.addView(ui.button("Lưu") {
-            val pw = fPass.text.toString()
-            if (pw.length < Config.MIN_PASSWORD) { toast("Mật khẩu cần ≥${Config.MIN_PASSWORD} ký tự"); return@button }
-            cfg.password = pw
-            toast(if (BridgeService.running) "Đã lưu (đổi nhà cung cấp thì dừng rồi bật lại cầu nối)" else "Đã lưu")
-            refreshStatus()
-        })
         return c
     }
 
-    /** Khối biến môi trường dán sẵn cho phía Claude Code. */
-    private fun envBlock(): String {
-        val sb = StringBuilder()
-        BridgeService.tunnelUrl?.let { sb.append("export BRIDGE_URL='$it'\n") }
-        sb.append("export BRIDGE_PASSWORD='${cfg.password}'\n")
-        return sb.toString().trimEnd()
-    }
-
     // ───────────────────────── tiện ích ─────────────────────────
-
-    private fun randomPass(): String {
-        val cs = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"
-        val r = SecureRandom(); return (1..24).map { cs[r.nextInt(cs.length)] }.joinToString("")
-    }
 
     private fun copy(s: String) {
         (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)

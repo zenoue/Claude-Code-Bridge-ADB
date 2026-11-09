@@ -2,14 +2,14 @@ name: Build APK
 
 on:
   push:
-    branches: [main]
+    branches: [main_1]
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-main
+  group: release-main_1
   cancel-in-progress: false
 
 jobs:

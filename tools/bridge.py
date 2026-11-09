@@ -2,8 +2,7 @@
 """Claude Code ↔ ADB: gửi lệnh adb shell tới điện thoại (chạy ở phía Claude Code).
 
 Biến môi trường (lấy bằng nút "Sao chép cho Claude Code" trong app):
-  BRIDGE_URL       https://xxxx.lhr.life  (địa chỉ đường hầm)
-  BRIDGE_PASSWORD  mật khẩu ký lệnh (không bao giờ gửi đi, chỉ dùng để ký HMAC)
+  BRIDGE_URL   https://xxxx.lhr.life/<khoá>   (địa chỉ đường hầm, đã kèm khoá – không cần mật khẩu)
 
 Dùng:
   bridge.py ping                       # kiểm tra app còn sống + ADB đã kết nối
@@ -14,20 +13,17 @@ Dùng:
 BRIDGE_TIMEOUT (giây, mặc định 90) = thời gian chờ tối đa mỗi lệnh.
 Chỉ dùng thư viện chuẩn Python 3.
 """
-import hashlib
-import hmac
 import json
 import os
-import secrets
 import sys
 import time
 import urllib.error
 import urllib.request
 
-TUNNEL = os.environ.get("BRIDGE_URL", "").rstrip("/")
-PASSWORD = os.environ.get("BRIDGE_PASSWORD", "")
+BASE = os.environ.get("BRIDGE_URL", "").strip().rstrip("/")
 TIMEOUT = float(os.environ.get("BRIDGE_TIMEOUT", "90"))
-UA = "cc-bridge-adb/1.0"
+UA = "cc-bridge-adb/2.0"
+RETRIES = 2  # lỗi mạng tạm thời của đường hầm (502/503/504, mất kết nối) -> thử lại
 
 
 def die(m, code=1):
@@ -35,34 +31,34 @@ def die(m, code=1):
     sys.exit(code)
 
 
-def signed(typ, cmd=""):
-    seq = int(time.time() * 1000)
-    nonce = secrets.token_hex(12)
-    msg = f"{seq}\n{seq}\n{typ}\n{nonce}\n{cmd}".encode()
-    sig = hmac.new(PASSWORD.encode(), msg, hashlib.sha256).hexdigest()
-    return {"seq": seq, "ts": seq, "type": typ, "cmd": cmd, "nonce": nonce, "sig": sig}
-
-
 def send(typ, cmd="", timeout=None):
     timeout = timeout or TIMEOUT
-    body = signed(typ, cmd)
-    body["timeout"] = int(max(1, timeout - 5) * 1000)  # app dừng lệnh trước khi HTTP hết giờ
-    r = urllib.request.Request(f"{TUNNEL}/cmd", data=json.dumps(body).encode(), method="POST",
-                               headers={"Content-Type": "application/json", "User-Agent": UA})
-    try:
-        with urllib.request.urlopen(r, timeout=timeout + 10) as resp:
-            d = json.loads(resp.read().decode())
-    except urllib.error.HTTPError as e:
-        txt = e.read().decode(errors="replace")
+    body = {"type": typ, "cmd": cmd, "timeout": int(max(1, timeout - 5) * 1000)}  # app dừng lệnh trước khi HTTP hết giờ
+    data = json.dumps(body).encode()
+    last = None
+    for attempt in range(RETRIES + 1):
+        r = urllib.request.Request(f"{BASE}/cmd", data=data, method="POST",
+                                   headers={"Content-Type": "application/json", "User-Agent": UA})
         try:
-            d = json.loads(txt)
-        except ValueError:
-            die(f"HTTP {e.code} từ đường hầm (app tắt hoặc địa chỉ đã đổi?): {txt[:200]}")
-        if "exit" not in d:
-            die(f"{d.get('error', txt[:200])} – kiểm tra BRIDGE_URL")
-    except Exception as e:
-        die(f"không gọi được {TUNNEL}: {e}")
-    return d.get("exit"), d.get("output", ""), d.get("next")
+            with urllib.request.urlopen(r, timeout=timeout + 10) as resp:
+                d = json.loads(resp.read().decode())
+            return d.get("exit"), d.get("output", ""), d.get("next")
+        except urllib.error.HTTPError as e:
+            txt = e.read().decode(errors="replace")
+            if e.code == 404:
+                die("địa chỉ sai hoặc khoá đã đổi – sao chép lại BRIDGE_URL từ app")
+            if e.code in (502, 503, 504) and typ in ("ping", "logs"):
+                last = f"HTTP {e.code}: {txt[:200]}"
+            else:
+                die(f"HTTP {e.code} từ đường hầm (app tắt hoặc địa chỉ đã đổi?): {txt[:200]}")
+        except (urllib.error.URLError, ConnectionError, TimeoutError) as e:
+            # lệnh exec có thể đã chạy -> không gửi lại để tránh chạy hai lần
+            if typ not in ("ping", "logs"):
+                die(f"không gọi được {BASE}: {e}")
+            last = str(e)
+        if attempt < RETRIES:
+            time.sleep(2 * (attempt + 1))
+    die(f"không gọi được {BASE}: {last} – app tắt hoặc địa chỉ đã đổi?")
 
 
 # ───────── lệnh ─────────
@@ -116,10 +112,10 @@ def main():
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help", "help"):
         print(__doc__)
         return
-    if not PASSWORD:
-        die("thiếu BRIDGE_PASSWORD")
-    if not TUNNEL:
-        die("thiếu BRIDGE_URL (địa chỉ đường hầm trong app)")
+    if not BASE:
+        die("thiếu BRIDGE_URL (nút \"Sao chép cho Claude Code\" trong app)")
+    if not BASE.startswith("https://") or BASE.count("/") < 3:
+        die("BRIDGE_URL phải có dạng https://xxxx.lhr.life/<khoá> – sao chép lại từ app")
     {
         "exec": cmd_exec, "ping": cmd_ping, "logcat": cmd_logcat,
         "stop-logcat": cmd_stop,

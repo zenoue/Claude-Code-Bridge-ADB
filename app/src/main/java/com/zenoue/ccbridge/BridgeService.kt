@@ -8,13 +8,15 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.ConnectivityManager
+import android.net.Network
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 
 /**
- * Dịch vụ nền: server HTTP 127.0.0.1:<port> + đường hầm SSH ra URL https công khai.
- * Claude Code gửi lệnh đã ký HMAC vào URL đó; lệnh chạy qua ADB nội bộ.
+ * Dịch vụ nền: server HTTP 127.0.0.1:<port> + đường hầm SSH ra địa chỉ https công khai.
+ * Claude Code gửi lệnh vào `<địa chỉ>/<khoá>/cmd`; lệnh chạy qua ADB nội bộ.
  */
 class BridgeService : Service() {
 
@@ -23,22 +25,35 @@ class BridgeService : Service() {
         private const val NOTIF_ID = 11
         @Volatile var running = false; private set
         @Volatile var status = "Chưa chạy"; private set
-        @Volatile var tunnelUrl: String? = null; private set
-        @Volatile var tunnelState: String = ""; private set
+        @Volatile var tunnel: Tunnel.State? = null; private set
         @Volatile var onStatus: (() -> Unit)? = null
+
+        /** Địa chỉ gốc của đường hầm (chưa kèm khoá). */
+        val tunnelUrl: String? get() = tunnel?.url
+
+        /** Địa chỉ đầy đủ dán cho Claude Code (kèm khoá). */
+        fun bridgeUrl(cfg: Config): String? = tunnelUrl?.let { "$it/${cfg.urlKey}" }
 
         fun start(ctx: Context) {
             val i = Intent(ctx, BridgeService::class.java)
             if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i)
         }
         fun stop(ctx: Context) = ctx.stopService(Intent(ctx, BridgeService::class.java))
+
+        /** Nối lại đường hầm ngay (vd sau khi đổi nhà cung cấp). */
+        fun reconnect(ctx: Context) {
+            if (!running) return
+            stop(ctx)
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ start(ctx) }, 400)
+        }
     }
 
     @Volatile private var alive = false
     private var worker: Thread? = null
     private var server: LocalServer? = null
-    private var tunnel: Tunnel? = null
+    private var tun: Tunnel? = null
     private var wake: PowerManager.WakeLock? = null
+    private var netCb: ConnectivityManager.NetworkCallback? = null
 
     override fun onBind(i: Intent?): IBinder? = null
 
@@ -59,11 +74,13 @@ class BridgeService : Service() {
     override fun onDestroy() {
         alive = false; running = false
         worker?.interrupt()
-        tunnel?.stop(); tunnel = null
+        netCb?.let { try { getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(it) } catch (_: Throwable) { } }
+        netCb = null
+        tun?.stop(); tun = null
         server?.stop(); server = null
         LogStream.stop()
         try { wake?.release() } catch (_: Throwable) { }
-        tunnelUrl = null; tunnelState = ""
+        tunnel = null
         status = "Đã dừng"; onStatus?.invoke()
         getSystemService(NotificationManager::class.java)?.cancel(NOTIF_ID)
         Console.info("Cầu nối đã dừng")
@@ -78,14 +95,19 @@ class BridgeService : Service() {
 
     private fun loop() {
         val cfg = Config(this)
-        if (!cfg.ready) { setStatus("Thiếu mật khẩu"); stopSelf(); return }
         tryConnectAdb(cfg)
         if (!startTunnel(cfg)) { stopSelf(); return }
+        watchNetwork()
         while (alive) {
             try {
                 if (!Adb.isConnected(this)) tryConnectAdb(cfg)
                 val adb = if (Adb.isConnected(this)) "ADB ✓" else "ADB chưa kết nối"
-                setStatus((if (tunnelUrl != null) "Đường hầm ✓" else "Đang mở đường hầm…") + " · " + adb)
+                val t = when (tunnel?.phase) {
+                    Tunnel.Phase.ONLINE -> "Đường hầm ✓ ${tunnel?.provider?.label ?: ""}".trim()
+                    Tunnel.Phase.RETRYING -> "Đang nối lại đường hầm…"
+                    else -> "Đang mở đường hầm…"
+                }
+                setStatus("$t · $adb")
             } catch (t: Throwable) {
                 Console.err("Lỗi vòng lặp: ${t.message}")
             }
@@ -94,7 +116,7 @@ class BridgeService : Service() {
     }
 
     private fun startTunnel(cfg: Config): Boolean {
-        val api = HttpApi({ cfg.password }, { type, cmd, t -> Commands.run(this, cfg, type, cmd, t) })
+        val api = HttpApi({ cfg.urlKey }, { type, cmd, t -> Commands.run(this, cfg, type, cmd, t) })
         try {
             server = LocalServer(cfg.httpPort, api::handle).also { it.start() }
         } catch (t: Throwable) {
@@ -102,15 +124,33 @@ class BridgeService : Service() {
             setStatus("Lỗi cổng ${cfg.httpPort}")
             return false
         }
-        val p = Tunnel.Provider.of(cfg.provider)
-        tunnel = Tunnel(p, cfg.httpPort, cfg.sshKey) { st, url ->
-            val changed = url != tunnelUrl
-            tunnelState = st; tunnelUrl = url
-            if (url != null && changed) Console.info("Đường hầm: $url")
-            else if (url == null && st.startsWith("Lỗi")) Console.err(st)
+        tun = Tunnel(Tunnel.Provider.chain(cfg.provider), cfg.httpPort, cfg.sshKey, { "/${cfg.urlKey}/health" }) { st ->
+            val old = tunnel
+            tunnel = st
+            when {
+                st.phase == Tunnel.Phase.ONLINE && st.url != old?.url -> Console.info("Đường hầm: ${st.url} (${st.provider?.label})")
+                st.phase == Tunnel.Phase.RETRYING && st.message != old?.message -> Console.err(st.message)
+            }
             onStatus?.invoke()
         }.also { it.start() }
         return true
+    }
+
+    /** Đổi mạng (Wi‑Fi ↔ 4G) thì nối lại đường hầm ngay, không chờ SSH keep‑alive hết hạn. */
+    private fun watchNetwork() {
+        val cm = getSystemService(ConnectivityManager::class.java) ?: return
+        val cb = object : ConnectivityManager.NetworkCallback() {
+            private var current: Network? = null
+            override fun onAvailable(network: Network) {
+                val prev = current
+                current = network
+                if (prev != null && prev != network) {
+                    Console.info("Mạng thay đổi – nối lại đường hầm")
+                    tun?.kick()
+                }
+            }
+        }
+        try { cm.registerDefaultNetworkCallback(cb); netCb = cb } catch (_: Throwable) { }
     }
 
     // ───────── notification ─────────
