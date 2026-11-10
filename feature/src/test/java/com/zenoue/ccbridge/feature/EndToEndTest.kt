@@ -71,6 +71,7 @@ class EndToEndTest {
                 else -> when (cmd) {
                     "fail" -> HttpApi.Reply(7, "nope")
                     "unicode" -> HttpApi.Reply(0, "Tiếng Việt ✓")
+                    "big" -> HttpApi.Reply(0, (1..60000).joinToString("\n"))
                     else -> HttpApi.Reply(0, "ran <$cmd>")
                 }
             }
@@ -105,6 +106,10 @@ class EndToEndTest {
             assertEquals("ran <echo 'a b' \"x\" | tr a-z A-Z>", exec.out.trim())
             assertEquals("Tiếng Việt ✓", bridge(env, "exec", "unicode").out.trim())
             assertEquals(7, bridge(env, "exec", "fail").exit)
+            // large reply goes through gzip
+            val big = bridge(env, "exec", "big")
+            assertEquals(big.err, 0, big.exit)
+            assertEquals((1..60000).joinToString("\n"), big.out.trimEnd())
 
             // wrong password: the pointer does not verify and nothing runs
             val before = ran.size

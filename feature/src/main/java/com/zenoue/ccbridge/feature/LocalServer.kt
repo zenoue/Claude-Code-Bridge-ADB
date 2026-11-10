@@ -72,15 +72,25 @@ class LocalServer(private val port: Int, private val handler: (Request) -> Respo
                 }
                 val req = Request(parts[0].uppercase(), parts[1], headers, String(body, 0, off, Charsets.UTF_8))
                 val resp = try { handler(req) } catch (t: Throwable) { Response(500, err(t.toString())) }
-                write(sock, resp)
+                val gzip = headers["accept-encoding"]?.contains("gzip") == true
+                write(sock, resp, gzip)
             } catch (_: Throwable) { }
         }
     }
 
-    private fun write(s: Socket, r: Response) {
-        val body = r.body.toByteArray(Charsets.UTF_8)
+    /**
+     * [gzip]: the client accepts gzip. The free localhost.run tier is speed limited (a few KB/s were
+     * measured), and shell output usually compresses 5-10x, so large bodies are compressed.
+     */
+    private fun write(s: Socket, r: Response, gzip: Boolean = false) {
+        val raw = r.body.toByteArray(Charsets.UTF_8)
+        val compress = gzip && raw.size >= GZIP_MIN
+        val body = if (!compress) raw else ByteArrayOutputStream().also { b ->
+            java.util.zip.GZIPOutputStream(b).use { it.write(raw) }
+        }.toByteArray()
         val head = "HTTP/1.1 ${r.code} ${reason(r.code)}\r\n" +
             "Content-Type: ${r.type}\r\n" +
+            (if (compress) "Content-Encoding: gzip\r\n" else "") +
             "Content-Length: ${body.size}\r\n" +
             "Cache-Control: no-store\r\n" +
             "Connection: close\r\n\r\n"
@@ -92,6 +102,7 @@ class LocalServer(private val port: Int, private val handler: (Request) -> Respo
 
     companion object {
         const val MAX_BODY = 1 shl 20
+        private const val GZIP_MIN = 1024
 
         fun err(msg: String) = "{\"error\":" + jsonStr(msg) + "}"
 

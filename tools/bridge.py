@@ -13,14 +13,17 @@ Usage:
   bridge.py logcat ["logcat -v time"]  # start a logcat stream and follow it (Ctrl+C)
   bridge.py stop-logcat
   bridge.py url                        # print the current tunnel URL
+  bridge.py console                    # the app's own log (CLI tab): tunnel / ADB events
 
 BRIDGE_TIMEOUT (seconds, default 90) = max time per command.
 Python 3 standard library only.
 """
 import hashlib
+import http.client
 import hmac
 import json
 import os
+import gzip
 import secrets
 import sys
 import time
@@ -140,15 +143,16 @@ def _signed(typ, cmd, timeout):
 def _post(base, data, timeout):
     """POST one signed request. Raises Unreachable when it certainly did not reach the app."""
     req = urllib.request.Request(f"{base}/cmd", data=data, method="POST",
-                                 headers={"Content-Type": "application/json", "User-Agent": UA})
+                                 headers={"Content-Type": "application/json", "User-Agent": UA,
+                                          "Accept-Encoding": "gzip"})
     try:
         with urllib.request.urlopen(req, timeout=timeout + 10) as resp:
-            d = json.loads(resp.read().decode())
+            d = json.loads(_body(resp).decode())
         if not isinstance(d, dict) or "exit" not in d:
             raise ValueError("not a bridge reply")
         return d
     except urllib.error.HTTPError as e:
-        txt = e.read().decode(errors="replace")
+        txt = _body(e).decode(errors="replace")
         try:
             d = json.loads(txt)
         except ValueError:
@@ -157,6 +161,10 @@ def _post(base, data, timeout):
             return d  # the app answered (bad signature, replay, ...)
         # anything else comes from the tunnel provider: no such tunnel / app offline
         raise Unreachable(f"HTTP {e.code} from {base}: {txt[:120].strip()}")
+    except http.client.IncompleteRead as e:
+        # the command ran; only the reply was cut by the tunnel -> do not resend
+        raise BridgeError(f"reply cut off by the tunnel after {len(e.partial)} bytes; "
+                          "use less output (e.g. | head, | tail, > file) and retry")
     except ValueError as e:
         # some other server answers on this (stale) URL
         raise Unreachable(f"{base}: {e}")
@@ -165,6 +173,13 @@ def _post(base, data, timeout):
             # do not fail over: the command may still be running on the phone
             raise BridgeError(f"no response from {base} within {int(timeout + 10)}s")
         raise Unreachable(f"{base}: {e}")
+
+
+def _body(resp):
+    raw = resp.read()
+    if resp.headers.get("Content-Encoding", "").lower() == "gzip":
+        raw = gzip.decompress(raw)
+    return raw
 
 
 def call(typ, cmd="", timeout=None):
@@ -217,6 +232,10 @@ def cmd_ping(_):
     sys.exit(0 if code == 0 else 1)
 
 
+def cmd_console(_):
+    print(send("console", timeout=20)[1])
+
+
 def cmd_url(_):
     for base in candidates():
         print(base)
@@ -263,7 +282,7 @@ def main():
         die("BRIDGE_ID is not set (use the \"Sao chép cho Claude Code\" button in the app)")
     {
         "exec": cmd_exec, "ping": cmd_ping, "logcat": cmd_logcat,
-        "stop-logcat": cmd_stop, "url": cmd_url,
+        "stop-logcat": cmd_stop, "url": cmd_url, "console": cmd_console,
     }.get(sys.argv[1], lambda _: die(f"unknown command: {sys.argv[1]}"))(sys.argv[2:])
 
 

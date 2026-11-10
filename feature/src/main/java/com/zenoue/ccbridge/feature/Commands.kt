@@ -34,6 +34,8 @@ object Commands {
                 HttpApi.Reply(if (LogStream.running) 0 else 1, lines.joinToString("") { it + "\n" }, next)
             }
             "exec" -> exec(ctx, cfg, cmd, timeoutMs)
+            // the app's own console (CLI tab) - tunnel/ADB events with timestamps, for remote diagnosis
+            "console" -> HttpApi.Reply(0, Console.dump())
             else -> HttpApi.Reply(-1, "Unsupported command type: $type")
         }
     }
