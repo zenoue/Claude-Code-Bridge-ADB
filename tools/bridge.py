@@ -183,8 +183,12 @@ def call(typ, cmd="", timeout=None):
         if BRIDGE_ID:
             _store_url(base)
         return d.get("exit"), d.get("output", ""), d.get("next")
-    hint = "is the bridge running in the app?" if errors else "set BRIDGE_ID (or BRIDGE_URL)"
-    raise BridgeError("; ".join(errors[-2:]) + f" - no reachable tunnel, {hint}")
+    if errors:
+        raise BridgeError("; ".join(errors[-2:]) + " - no reachable tunnel; is the bridge running in the app?")
+    if BRIDGE_ID:
+        raise BridgeError(f"no tunnel address published under {BRIDGE_ID} yet (the app has not posted to "
+                          f"{RENDEZVOUS}); check the 'Cầu nối' card in the app, or set BRIDGE_URL")
+    raise BridgeError("set BRIDGE_ID (or BRIDGE_URL)")
 
 
 def send(typ, cmd="", timeout=None):
@@ -217,7 +221,7 @@ def cmd_url(_):
     for base in candidates():
         print(base)
         return
-    die("no tunnel URL known")
+    die(f"no tunnel URL known (nothing published under {BRIDGE_ID or '-'} yet)")
 
 
 def follow(after):
