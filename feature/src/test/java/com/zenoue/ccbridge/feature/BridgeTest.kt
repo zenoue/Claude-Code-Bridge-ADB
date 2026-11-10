@@ -31,6 +31,20 @@ class ExitParseTest {
 }
 
 class ConsoleTest {
+    @Test fun shortOutputUnchanged() = assertEquals("a\nb", Console.clip("a\nb"))
+
+    @Test fun longOutputIsClippedForScreen() {
+        val many = (1..5000).joinToString("\n") { "line $it" }
+        val c = Console.clip(many)
+        assertTrue(c.startsWith("line 1\n"))
+        assertTrue(c.endsWith("line 5000"))
+        assertTrue(c.contains("ẩn ${5000 - Console.OUT_KEEP_LINES * 2} dòng"))
+        assertTrue(c.length < Console.OUT_MAX_CHARS + 200)
+
+        val oneLine = "x".repeat(100_000)
+        assertTrue(Console.clip(oneLine).length < Console.OUT_MAX_CHARS + 200)
+    }
+
     @Test fun idsIncreaseAndSinceWorksAfterTrim() {
         Console.clear()
         repeat(Console.MAX + 10) { Console.out("l$it") }

@@ -11,13 +11,18 @@ object Console {
     data class Entry(val id: Long, val kind: Kind, val text: String, val time: Long = System.currentTimeMillis())
 
     const val MAX = 500
+
+    /** Output shown in the CLI tab is clipped: one huge selectable TextView froze the UI thread (ANR). */
+    const val OUT_KEEP_LINES = 40
+    const val OUT_MAX_CHARS = 8000
     private val lines = ArrayDeque<Entry>()
     private var nextId = 1L
     @Volatile var onChange: (() -> Unit)? = null
 
     fun add(kind: Kind, text: String) {
+        val shown = if (kind == Kind.OUT) clip(text) else text.take(OUT_MAX_CHARS)
         synchronized(lines) {
-            lines.addLast(Entry(nextId++, kind, text))
+            lines.addLast(Entry(nextId++, kind, shown))
             while (lines.size > MAX) lines.removeFirst()
         }
         onChange?.invoke()
@@ -28,6 +33,31 @@ object Console {
     fun out(text: String) = add(Kind.OUT, text)
     fun info(text: String) = add(Kind.INFO, text)
     fun err(text: String) = add(Kind.ERR, text)
+
+    /**
+     * Keeps the first and last [OUT_KEEP_LINES] lines (and at most [OUT_MAX_CHARS] chars) of a long output.
+     * Only the on-screen copy is clipped; the reply sent to Claude Code keeps the full output.
+     */
+    fun clip(text: String): String {
+        val all = text.split('\n')
+        var head: String
+        var tail: String
+        val hiddenLines: Int
+        if (all.size > OUT_KEEP_LINES * 2 + 1) {
+            head = all.subList(0, OUT_KEEP_LINES).joinToString("\n")
+            tail = all.subList(all.size - OUT_KEEP_LINES, all.size).joinToString("\n")
+            hiddenLines = all.size - OUT_KEEP_LINES * 2
+        } else if (text.length > OUT_MAX_CHARS) {
+            head = text; tail = ""; hiddenLines = 0
+        } else return text
+        val half = OUT_MAX_CHARS / 2
+        if (head.length > half) head = head.take(half) + "…"
+        if (tail.length > half) tail = "…" + tail.takeLast(half)
+        if (tail.isEmpty() && text.length > OUT_MAX_CHARS) tail = "…" + text.takeLast(half)
+        val note = (if (hiddenLines > 0) "ẩn $hiddenLines dòng" else "ẩn bớt") +
+            (if (text.length >= 1024) ", tổng ${text.length / 1024} KB" else "")
+        return "$head\n  ⋯ ($note – chỉ rút gọn trên màn hình) ⋯\n$tail"
+    }
 
     fun snapshot(): List<Entry> = synchronized(lines) { ArrayList(lines) }
 
