@@ -8,8 +8,8 @@ import android.os.Looper
 import android.os.Process
 
 /**
- * Chạy ở tiến trình riêng (":restart"): giết tiến trình chính rồi mở lại app,
- * để nạp feature.dex mới (lớp đã nạp không gỡ được khỏi tiến trình cũ).
+ * Runs in its own process (":restart"): kills the main process and reopens the app so a new
+ * feature.dex gets loaded (classes cannot be unloaded from the old process).
  */
 class RestartActivity : Activity() {
 

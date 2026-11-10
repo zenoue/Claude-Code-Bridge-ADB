@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- nền: trời xanh đậm chuyển sang xanh ngọc -->
+<!-- background: dark teal to green gradient -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
     <gradient android:angle="270" android:startColor="#14524A" android:endColor="#1E8A6A" />
 </shape>

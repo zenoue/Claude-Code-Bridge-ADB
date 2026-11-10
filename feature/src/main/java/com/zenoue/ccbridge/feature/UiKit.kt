@@ -61,13 +61,14 @@ class UiKit(val ctx: Context, val p: Palette) {
         setTextIsSelectable(true)
     }
 
-    fun field(hint: String, value: String, numeric: Boolean = false): EditText = EditText(ctx).apply {
+    fun field(hint: String, value: String, password: Boolean = false, numeric: Boolean = false): EditText = EditText(ctx).apply {
         setText(value); this.hint = hint
         setTextColor(p.text); setHintTextColor(p.muted); textSize = 14f
         background = GradientDrawable().apply { setColor(p.field); cornerRadius = ctx.dp(10).toFloat() }
         setPadding(ctx.dp(12), ctx.dp(12), ctx.dp(12), ctx.dp(12))
         inputType = when {
             numeric -> InputType.TYPE_CLASS_NUMBER
+            password -> InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
             else -> InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
         }
         layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = ctx.dp(6) }

@@ -3,8 +3,8 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-// Giao diện cố định giữa APK (vỏ) và feature.dex (chức năng tải từ GitHub).
-// Đổi bất kỳ thứ gì ở đây -> tăng API_VERSION -> phải cài APK mới.
+// Stable contract between the APK shell and feature.dex (features downloaded from GitHub).
+// Any change here -> bump API_VERSION -> users must install a new APK.
 android {
     namespace = "com.zenoue.ccbridge.api"
     compileSdk = 35

@@ -1,23 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Cầu treo: hai trụ, dây cáp chính, dây treo, mặt cầu và sóng nước (nằm trong vùng an toàn 66dp) -->
+<!-- Suspension bridge: two towers, main cable, hangers, deck and water (inside the 66dp safe zone) -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp" android:height="108dp"
     android:viewportWidth="108" android:viewportHeight="108">
-    <!-- dây cáp: neo hai đầu -> đỉnh trụ -> võng giữa nhịp -->
+    <!-- main cable: anchors -> tower tops -> sag at mid-span -->
     <path android:strokeColor="#FFFFFF" android:strokeWidth="2.6" android:strokeLineCap="round"
         android:strokeLineJoin="round" android:fillColor="#00000000"
         android:pathData="M26,63 Q33,46 38,36 Q54,80 70,36 Q75,46 82,63" />
-    <!-- dây treo -->
+    <!-- hangers -->
     <path android:strokeColor="#FFFFFF" android:strokeWidth="1.8" android:strokeLineCap="round"
         android:fillColor="#00000000"
         android:pathData="M46,52.5V63 M54,58V63 M62,52.5V63 M31.5,52V63 M76.5,52V63" />
-    <!-- hai trụ cầu -->
+    <!-- towers -->
     <path android:fillColor="#FFFFFF"
         android:pathData="M35.5,34h5v40h-5z M67.5,34h5v40h-5z" />
-    <!-- mặt cầu -->
+    <!-- deck -->
     <path android:fillColor="#FFFFFF"
         android:pathData="M25,63h58a1.5,1.5 0,0 1,1.5 1.5v2a1.5,1.5 0,0 1,-1.5 1.5h-58a1.5,1.5 0,0 1,-1.5 -1.5v-2a1.5,1.5 0,0 1,1.5 -1.5z" />
-    <!-- sóng nước -->
+    <!-- water -->
     <path android:strokeColor="#9FF0D4" android:strokeWidth="2" android:strokeLineCap="round"
         android:fillColor="#00000000"
         android:pathData="M32,76q3,-2.5 6,0t6,0t6,0t6,0t6,0t6,0t6,0" />

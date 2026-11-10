@@ -30,9 +30,11 @@ import com.zenoue.ccbridge.api.ActivityDelegate
 import java.util.concurrent.Executors
 
 /**
- * Màn hình chính (chạy trong feature.dex, APK chỉ chuyển tiếp vòng đời Activity vào đây). Hai tab:
- *  - CLI: gõ lệnh adb shell và xem kết quả; lệnh Claude Code gửi đến (qua đường hầm) cũng hiện ở đây.
- *  - Connect: kết nối Gỡ lỗi không dây (ADB trong app), mở đường hầm, bật/tắt cầu nối (không mật khẩu).
+ * Main screen (lives in feature.dex; the APK only forwards the Activity lifecycle). Two tabs:
+ *  - CLI: type adb shell commands and see results; commands sent by Claude Code show up here too.
+ *  - Connect: wireless debugging (in-app ADB), tunnel + fixed address, password, feature updates.
+ *
+ * All strings in this file are UI text and stay Vietnamese.
  */
 class MainScreen(private val activity: Activity) : ContextWrapper(activity), ActivityDelegate {
 
@@ -78,7 +80,7 @@ class MainScreen(private val activity: Activity) : ContextWrapper(activity), Act
         head.addView(statusLabel)
         root.addView(head)
 
-        // thanh tab ở trên
+        // tab bar
         val bar = ui.row().apply { setPadding(dp(12), 0, dp(12), dp(6)) }
         listOf("CLI", "Connect").forEachIndexed { i, name ->
             val tv = TextView(this).apply {
@@ -98,7 +100,7 @@ class MainScreen(private val activity: Activity) : ContextWrapper(activity), Act
         Console.onChange = { main.post { if (tab == TAB_CLI) appendNewConsole() } }
         BridgeCore.onStatus = { main.post { refreshStatus() } }
         selectTab(if (Adb.isConnected(this)) TAB_CLI else TAB_CONNECT)
-        // đã bật cổng 5555 trước đó: tự nối lại khi mở app (không cần Wi‑Fi)
+        // TCP port 5555 was enabled earlier: reconnect on app start (no Wi-Fi needed)
         if (!Adb.isConnected(this) && cfg.tcpMode) io.execute {
             if (Adb.tcpPortOpen() && Adb.connect(this, "127.0.0.1", Adb.TCP_PORT)) main.post {
                 Console.info("ADB kết nối 127.0.0.1:${Adb.TCP_PORT} (không cần Wi‑Fi)")
@@ -132,6 +134,10 @@ class MainScreen(private val activity: Activity) : ContextWrapper(activity), Act
             it.text = tunnelText()
             it.setTextColor(if (BridgeCore.tunnelUrl != null) p.accent else p.muted)
         }
+        pointerLabel?.let {
+            it.text = pointerText()
+            it.setTextColor(when (BridgeCore.pointer?.ok) { true -> p.accent; false -> p.warn; else -> p.muted })
+        }
     }
 
     private fun selectTab(i: Int) {
@@ -146,13 +152,13 @@ class MainScreen(private val activity: Activity) : ContextWrapper(activity), Act
             }
         }
         container.removeAllViews()
-        consoleList = null; consoleScroll = null; cliHint = null; input = null; tunnelLabel = null
+        consoleList = null; consoleScroll = null; cliHint = null; input = null; tunnelLabel = null; pointerLabel = null
         updateLabel = null; applyButton = null
         if (i == TAB_CLI) container.addView(cliTab()) else container.addView(connectTab())
         refreshStatus()
     }
 
-    // ───────────────────────── Tab CLI ─────────────────────────
+    // ───────────────────────── CLI tab ─────────────────────────
 
     private fun cliTab(): LinearLayout {
         val col = ui.column().apply { layoutParams = LinearLayout.LayoutParams(-1, -1) }
@@ -169,7 +175,7 @@ class MainScreen(private val activity: Activity) : ContextWrapper(activity), Act
 
         val barWrap = ui.column().apply { setPadding(dp(12), dp(8), dp(12), dp(10)) }
 
-        // lệnh nhanh
+        // quick commands
         val chips = ui.row()
         for (q in QUICK) {
             chips.addView(TextView(this).apply {
@@ -255,7 +261,7 @@ class MainScreen(private val activity: Activity) : ContextWrapper(activity), Act
         val list = consoleList ?: return
         val fresh = Console.since(lastShownId)
         if (fresh.isEmpty()) {
-            // console bị xoá ở nơi khác -> vẽ lại
+            // console was cleared elsewhere -> redraw
             if (Console.snapshot().isEmpty() && list.childCount > 0 && list.getChildAt(0).tag != EMPTY_TAG) renderConsoleAll()
             return
         }
@@ -300,9 +306,10 @@ class MainScreen(private val activity: Activity) : ContextWrapper(activity), Act
         }
     }
 
-    // ───────────────────────── Tab Connect ─────────────────────────
+    // ───────────────────────── Connect tab ─────────────────────────
 
     private var tunnelLabel: TextView? = null
+    private var pointerLabel: TextView? = null
 
     private fun connectTab(): ScrollView {
         val sv = ScrollView(this).apply { isFillViewport = true }
@@ -310,7 +317,7 @@ class MainScreen(private val activity: Activity) : ContextWrapper(activity), Act
         sv.addView(col)
         col.addView(bridgeCard())
         col.addView(adbCard())
-        col.addView(tunnelCard())
+        col.addView(securityCard())
         col.addView(updateCard())
         return sv
     }
@@ -324,12 +331,37 @@ class MainScreen(private val activity: Activity) : ContextWrapper(activity), Act
         }
     }
 
+    private fun pointerText(): String {
+        val st = BridgeCore.pointer
+        return when {
+            !BridgeCore.running -> "Cố định, không đổi khi hầm nối lại"
+            st == null || st.ok == null -> "Đang chờ đường hầm…"
+            st.ok == true -> "✓ ${st.message} (${Fmt.clock(st.at)})"
+            else -> "✗ ${st.message}"
+        }
+    }
+
+    /** Block pasted into the Claude Code terminal. BRIDGE_URL is only a fallback for the fixed address. */
+    private fun envBlock(): String {
+        val sb = StringBuilder()
+        sb.append("export BRIDGE_ID='${cfg.bridgeId}'\n")
+        sb.append("export BRIDGE_PASSWORD='${cfg.password}'\n")
+        BridgeCore.tunnelUrl?.let { sb.append("export BRIDGE_URL='$it'\n") }
+        return sb.toString().trimEnd()
+    }
+
     private fun bridgeCard(): LinearLayout {
         val c = ui.card()
         c.addView(ui.title("Cầu nối"))
         c.addView(ui.kv("Trạng thái", if (BridgeCore.running) BridgeCore.status else "Tắt",
             if (BridgeCore.running) p.accent else p.muted))
-        c.addView(ui.label("Địa chỉ công khai (đường hầm)"))
+
+        c.addView(ui.label("Địa chỉ cố định (BRIDGE_ID)"))
+        c.addView(ui.mono(cfg.bridgeId).apply { textSize = 13f; setTextColor(p.text); setPadding(0, dp(4), 0, 0) })
+        pointerLabel = ui.muted(pointerText())
+        c.addView(pointerLabel)
+
+        c.addView(ui.label("Địa chỉ hầm hiện tại (localhost.run, tự đổi)"))
         tunnelLabel = ui.mono(tunnelText()).apply {
             textSize = 13f; setTextColor(if (BridgeCore.tunnelUrl != null) p.accent else p.muted)
             setPadding(0, dp(4), 0, dp(4))
@@ -346,18 +378,16 @@ class MainScreen(private val activity: Activity) : ContextWrapper(activity), Act
             main.postDelayed({ if (tab == TAB_CONNECT) selectTab(TAB_CONNECT) }, 600)
         })
         c.addView(ui.button("Sao chép cho Claude Code", primary = false) {
-            val url = BridgeCore.bridgeUrl(cfg)
-            if (url == null) { toast("Chưa có địa chỉ đường hầm – bắt đầu cầu nối trước"); return@button }
-            copy("export BRIDGE_URL='$url'"); toast("Đã sao chép địa chỉ")
+            copy(envBlock()); toast("Đã sao chép (có chứa mật khẩu)")
         })
-        c.addView(ui.muted("Dán vào terminal của Claude Code rồi chạy: python3 tools/bridge.py ping. " +
-            "Không cần mật khẩu: địa chỉ đã kèm khoá ngẫu nhiên, đừng chia sẻ công khai. " +
-            "Địa chỉ có thể đổi khi đường hầm nối lại – khi đó sao chép lại."))
+        c.addView(ui.muted("Chỉ cần sao chép MỘT LẦN: dán vào terminal của Claude Code rồi chạy python3 tools/bridge.py ping. " +
+            "Hầm nối lại hay đổi địa chỉ thì Claude Code tự tìm theo địa chỉ cố định. " +
+            "Chỉ phải sao chép lại khi đổi mật khẩu hoặc đổi địa chỉ cố định."))
         return c
     }
 
     private fun adbStateText() =
-        if (Adb.isConnected(this)) "Đã kết nối · ${Adb.mode}" else if (cfg.paired) "Đã ghép nối" else "Chưa ghép nối"
+        if (Adb.isConnected(this)) "Đã kết nối · " + (if (Adb.viaTcp) "TCP ${Adb.TCP_PORT} (không cần Wi‑Fi)" else "không dây (TLS)") else if (cfg.paired) "Đã ghép nối" else "Chưa ghép nối"
 
     private fun adbCard(): LinearLayout {
         val c = ui.card()
@@ -427,9 +457,10 @@ class MainScreen(private val activity: Activity) : ContextWrapper(activity), Act
     }
 
     /**
-     * Gỡ lỗi không cần Wi‑Fi: Android (kể cả 17, ADB Wi‑Fi 2.0) chỉ bật Gỡ lỗi không dây khi đang nối Wi‑Fi
-     * và tự tắt khi rời mạng. Trong lúc đang có kết nối ADB, gửi `tcpip:5555` để adbd mở thêm cổng TCP thường
-     * trên máy; sau đó nối 127.0.0.1:5555 – không phụ thuộc Wi‑Fi, giữ tới khi khởi động lại điện thoại.
+     * Debugging without Wi-Fi: Android (17 and ADB Wi-Fi 2.0 included) only enables wireless debugging
+     * while on Wi-Fi and turns it off when the network is left. While ADB is connected, send `tcpip:5555`
+     * so adbd also listens on a plain TCP port on the device, then connect to 127.0.0.1:5555 - independent
+     * of Wi-Fi, valid until the phone reboots.
      */
     private fun noWifiSection(c: LinearLayout) {
         c.addView(ui.divider())
@@ -437,7 +468,7 @@ class MainScreen(private val activity: Activity) : ContextWrapper(activity), Act
         c.addView(ui.muted("Android chỉ bật Gỡ lỗi không dây khi đang nối Wi‑Fi. Bấm \"Bật\" một lần khi ADB đang kết nối: " +
             "adbd mở thêm cổng ${Adb.TCP_PORT} ngay trên máy, sau đó tắt Wi‑Fi / chỉ dùng 4G vẫn kết nối được " +
             "cho tới khi khởi động lại điện thoại. Lần đầu máy hỏi \"Cho phép gỡ lỗi USB?\" → tích Luôn cho phép → Cho phép."))
-        // kiểm tra cổng ở luồng nền (socket trên luồng UI -> NetworkOnMainThreadException)
+        // check the port off the UI thread (a socket on the UI thread throws NetworkOnMainThreadException)
         val portLabel = ui.body("Cổng ${Adb.TCP_PORT}: đang kiểm tra…", p.muted, 13f)
         c.addView(portLabel)
         io.execute {
@@ -463,7 +494,7 @@ class MainScreen(private val activity: Activity) : ContextWrapper(activity), Act
                     log.text = if (ok) "✓ Đã kết nối qua cổng ${Adb.TCP_PORT} – giờ có thể tắt Wi‑Fi" else "✗ ${Adb.lastError}"
                     if (ok) Console.info("ADB kết nối 127.0.0.1:${Adb.TCP_PORT} (không cần Wi‑Fi)")
                     else {
-                        // không nối được cổng TCP -> quay lại Gỡ lỗi không dây nếu còn
+                        // TCP port did not work -> fall back to wireless debugging if available
                         if (cfg.adbPort > 0) io.execute { Adb.connect(this, "127.0.0.1", cfg.adbPort); main.post { refreshStatus() } }
                     }
                     refreshStatus()
@@ -497,16 +528,28 @@ class MainScreen(private val activity: Activity) : ContextWrapper(activity), Act
             "Tắt cổng khi dùng Wi‑Fi công cộng."))
     }
 
-    private fun tunnelCard(): LinearLayout {
+    private fun securityCard(): LinearLayout {
         val c = ui.card()
-        c.addView(ui.title("Đường hầm & chế độ"))
-        c.addView(ui.muted("Đường hầm localhost.run (không cần tài khoản). App tự kiểm tra địa chỉ mỗi 45 giây " +
-            "và nối lại ngay khi đổi Wi‑Fi/4G; địa chỉ có thể đổi sau khi nối lại."))
+        c.addView(ui.title("Mật khẩu & chế độ"))
+        c.addView(ui.label("Mật khẩu ký lệnh (≥${Config.MIN_PASSWORD} ký tự, chia sẻ với Claude Code)"))
+        val fPass = ui.field("mật khẩu", cfg.password, password = true); c.addView(fPass)
+        c.addView(ui.button("Tạo mật khẩu ngẫu nhiên", primary = false) { fPass.setText(Config.random(24)) })
+        c.addView(ui.button("Lưu mật khẩu") {
+            val pw = fPass.text.toString()
+            if (pw.length < Config.MIN_PASSWORD) { toast("Mật khẩu cần ≥${Config.MIN_PASSWORD} ký tự"); return@button }
+            if (pw.contains('\'')) { toast("Mật khẩu không được chứa dấu nháy đơn"); return@button }
+            cfg.password = pw
+            BridgeCore.refreshPointer()
+            toast("Đã lưu – sao chép lại cho Claude Code")
+        })
+        c.addView(ui.muted("Mật khẩu không bao giờ gửi qua mạng: mỗi lệnh được ký HMAC bằng mật khẩu, " +
+            "app chỉ chạy lệnh có chữ ký đúng. Ai biết địa chỉ mà không có mật khẩu thì không làm được gì."))
 
-        c.addView(ui.button("Đổi khoá trong địa chỉ", primary = false) {
-            cfg.newUrlKey()
-            toast("Đã đổi khoá – địa chỉ cũ hết hiệu lực, hãy sao chép lại")
-            refreshStatus()
+        c.addView(ui.button("Đổi địa chỉ cố định", primary = false) {
+            cfg.newBridgeId()
+            BridgeCore.refreshPointer()
+            toast("Đã đổi – sao chép lại cho Claude Code")
+            selectTab(TAB_CONNECT)
         })
 
         c.addView(Switch(this).apply {
@@ -518,7 +561,7 @@ class MainScreen(private val activity: Activity) : ContextWrapper(activity), Act
         return c
     }
 
-    // ───────────────────────── Cập nhật chức năng ─────────────────────────
+    // ───────────────────────── Feature updates ─────────────────────────
 
     private var updateLabel: TextView? = null
     private var applyButton: TextView? = null
@@ -542,7 +585,7 @@ class MainScreen(private val activity: Activity) : ContextWrapper(activity), Act
         })
         c.addView(ui.muted("Code chức năng (giao diện, ADB, đường hầm) tự tải từ GitHub (nhánh live) khi có bản mới – " +
             "không cần cài lại APK. Chỉ khi đổi phần vỏ APK mới cần cài APK. " +
-            "Sau khi khởi động lại, địa chỉ đường hầm có thể đổi."))
+            "Sau khi khởi động lại, Claude Code vẫn tìm thấy máy qua địa chỉ cố định."))
         refreshUpdate()
         return c
     }
@@ -559,7 +602,7 @@ class MainScreen(private val activity: Activity) : ContextWrapper(activity), Act
         applyButton?.visibility = if (u.pending != 0) android.view.View.VISIBLE else android.view.View.GONE
     }
 
-    // ───────────────────────── tiện ích ─────────────────────────
+    // ───────────────────────── helpers ─────────────────────────
 
     private fun copy(s: String) {
         (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)

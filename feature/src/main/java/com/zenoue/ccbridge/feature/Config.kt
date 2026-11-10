@@ -4,46 +4,50 @@ import android.content.Context
 import java.io.File
 import java.security.SecureRandom
 
-/** Cấu hình, lưu nội bộ trong app. */
+/** Settings, stored privately inside the app. */
 class Config(private val ctx: Context) {
     private val sp = ctx.getSharedPreferences("bridge", Context.MODE_PRIVATE)
 
-    init {
-        // dọn cấu hình bản cũ (mật khẩu ký lệnh, chọn nhà cung cấp đường hầm không còn dùng)
-        if (sp.contains("password") || sp.contains("provider") || sp.contains("tunnelProvider")) {
-            sp.edit().remove("password").remove("provider").remove("tunnelProvider").apply()
+    /** Shared secret used to sign commands. Generated on first use so the bridge works out of the box. */
+    var password: String
+        get() = synchronized(LOCK) {
+            sp.getString("password", null)?.takeIf { it.length >= MIN_PASSWORD }
+                ?: random(24).also { sp.edit().putString("password", it).commit() }
         }
+        set(v) { synchronized(LOCK) { sp.edit().putString("password", v).commit() } }
+
+    /** Fixed address: the secret rendezvous topic where the current tunnel URL is published. */
+    val bridgeId: String
+        get() = synchronized(LOCK) { sp.getString("bridgeId", null)?.takeIf { it.length >= 20 } ?: newBridgeId() }
+
+    /** New fixed address; the old one stops being updated. */
+    fun newBridgeId(): String = synchronized(LOCK) {
+        ("ccb-" + random(24)).also { sp.edit().putString("bridgeId", it).commit() }
     }
 
     var allowWrite: Boolean get() = sp.getBoolean("allowWrite", false); set(v) = sp.edit().putBoolean("allowWrite", v).apply()
 
-    // Đường hầm
+    // Tunnel
     var httpPort: Int get() = sp.getInt("httpPort", 8765); set(v) = sp.edit().putInt("httpPort", v).apply()
     val sshKey: File get() = File(ctx.filesDir, "tunnel_key")
 
-    /** Khoá ngẫu nhiên nằm trong địa chỉ đường hầm (tự sinh, người dùng không cần nhập). */
-    val urlKey: String
-        get() = synchronized(LOCK) { sp.getString("urlKey", null)?.takeIf { it.length >= 16 } ?: newUrlKey() }
-
-    /** Sinh khoá mới -> địa chỉ cũ hết hiệu lực. */
-    fun newUrlKey(): String = synchronized(LOCK) { randomKey().also { sp.edit().putString("urlKey", it).commit() } }
-
-    // ADB không dây (đã ghép nối)
+    // Wireless ADB (after pairing)
     var adbHost: String get() = sp.getString("adbHost", "127.0.0.1") ?: "127.0.0.1"; set(v) = put("adbHost", v.trim().ifEmpty { "127.0.0.1" })
     var adbPort: Int get() = sp.getInt("adbPort", 0); set(v) = sp.edit().putInt("adbPort", v).apply()
     var paired: Boolean get() = sp.getBoolean("paired", false); set(v) = sp.edit().putBoolean("paired", v).apply()
-    /** Đã bật chế độ cổng TCP 5555 (không cần Wi‑Fi) – app ưu tiên nối 127.0.0.1:5555. */
+    /** Classic TCP port 5555 mode (no Wi-Fi needed) is enabled - the app prefers 127.0.0.1:5555. */
     var tcpMode: Boolean get() = sp.getBoolean("tcpMode", false); set(v) = sp.edit().putBoolean("tcpMode", v).apply()
 
     private fun put(k: String, v: String) = sp.edit().putString(k, v).apply()
 
     companion object {
+        const val MIN_PASSWORD = 12
         private val LOCK = Any()
-        private const val KEY_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"
+        private const val CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"
 
-        fun randomKey(len: Int = 24): String {
+        fun random(len: Int): String {
             val r = SecureRandom()
-            return (1..len).map { KEY_CHARS[r.nextInt(KEY_CHARS.length)] }.joinToString("")
+            return (1..len).map { CHARS[r.nextInt(CHARS.length)] }.joinToString("")
         }
     }
 }

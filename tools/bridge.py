@@ -1,75 +1,209 @@
 #!/usr/bin/env python3
-"""Claude Code ↔ ADB: gửi lệnh adb shell tới điện thoại (chạy ở phía Claude Code).
+"""Claude Code <-> ADB: send adb shell commands to the phone (runs on the Claude Code side).
 
-Biến môi trường (lấy bằng nút "Sao chép cho Claude Code" trong app):
-  BRIDGE_URL   https://xxxx.lhr.life/<khoá>   (địa chỉ đường hầm, đã kèm khoá – không cần mật khẩu)
+Environment (from the "Sao chép cho Claude Code" button in the app):
+  BRIDGE_ID        fixed address, e.g. ccb-xxxxxxxx. Never changes; the app publishes its current
+                   tunnel URL under it, and this tool looks the URL up whenever needed.
+  BRIDGE_PASSWORD  shared password. Never sent anywhere; it only signs each command (HMAC-SHA256).
+  BRIDGE_URL       optional: current tunnel URL (https://xxxx.lhr.life), used if the lookup fails.
 
-Dùng:
-  bridge.py ping                       # kiểm tra app còn sống + ADB đã kết nối
-  bridge.py exec "dumpsys battery"     # chạy lệnh, in output, thoát với exit code của lệnh
-  bridge.py logcat ["logcat -v time"]  # bật stream logcat và theo dõi (Ctrl+C)
+Usage:
+  bridge.py ping                       # app alive? ADB connected?
+  bridge.py exec "dumpsys battery"     # run a command, print output, exit with its exit code
+  bridge.py logcat ["logcat -v time"]  # start a logcat stream and follow it (Ctrl+C)
   bridge.py stop-logcat
+  bridge.py url                        # print the current tunnel URL
 
-BRIDGE_TIMEOUT (giây, mặc định 90) = thời gian chờ tối đa mỗi lệnh.
-Chỉ dùng thư viện chuẩn Python 3.
+BRIDGE_TIMEOUT (seconds, default 90) = max time per command.
+Python 3 standard library only.
 """
+import hashlib
+import hmac
 import json
 import os
+import secrets
 import sys
 import time
 import urllib.error
 import urllib.request
 
-BASE = os.environ.get("BRIDGE_URL", "").strip().rstrip("/")
+BRIDGE_ID = os.environ.get("BRIDGE_ID", "").strip()
+PASSWORD = os.environ.get("BRIDGE_PASSWORD", "")
+DIRECT_URL = os.environ.get("BRIDGE_URL", "").strip().rstrip("/")
+RENDEZVOUS = os.environ.get("BRIDGE_RENDEZVOUS", "https://ntfy.sh").rstrip("/")
 TIMEOUT = float(os.environ.get("BRIDGE_TIMEOUT", "90"))
-UA = "cc-bridge-adb/2.0"
-RETRIES = 2  # lỗi mạng tạm thời của đường hầm (502/503/504, mất kết nối) -> thử lại
+UA = "cc-bridge-adb/3.0"
+CACHE_DIR = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "cc-bridge-adb")
+
+# Exit codes reported by the app (negative = the command did not run).
+APP_ERRORS = {-2: "wrong password", -3: "blocked (read-only mode)", -4: "ADB not connected on the phone",
+              -5: "clock skew > 5 min", -6: "duplicate request"}
+
+
+class BridgeError(Exception):
+    pass
+
+
+class Unreachable(BridgeError):
+    """The tunnel URL did not answer; the request did not reach the app."""
 
 
 def die(m, code=1):
-    print(f"Lỗi: {m}", file=sys.stderr)
+    print(f"Error: {m}", file=sys.stderr)
     sys.exit(code)
 
 
-def send(typ, cmd="", timeout=None):
-    timeout = timeout or TIMEOUT
-    body = {"type": typ, "cmd": cmd, "timeout": int(max(1, timeout - 5) * 1000)}  # app dừng lệnh trước khi HTTP hết giờ
-    data = json.dumps(body).encode()
-    last = None
-    for attempt in range(RETRIES + 1):
-        r = urllib.request.Request(f"{BASE}/cmd", data=data, method="POST",
-                                   headers={"Content-Type": "application/json", "User-Agent": UA})
+# ───────── fixed address -> current tunnel URL ─────────
+
+def _sign_pointer(ts, url):
+    return hmac.new(PASSWORD.encode(), f"ptr\n{ts}\n{url}".encode(), hashlib.sha256).hexdigest()
+
+
+def _cache_file():
+    return os.path.join(CACHE_DIR, f"{BRIDGE_ID}.url")
+
+
+def _cached_url():
+    try:
+        with open(_cache_file()) as f:
+            return f.read().strip() or None
+    except OSError:
+        return None
+
+
+def _store_url(url):
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        with open(_cache_file(), "w") as f:
+            f.write(url)
+    except OSError:
+        pass
+
+
+def lookup():
+    """Newest correctly signed tunnel URL published under BRIDGE_ID, or None."""
+    req = urllib.request.Request(f"{RENDEZVOUS}/{BRIDGE_ID}/json?poll=1&since=all", headers={"User-Agent": UA})
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        text = resp.read().decode(errors="replace")
+    best_ts, best = -1, None
+    for line in text.splitlines():
         try:
-            with urllib.request.urlopen(r, timeout=timeout + 10) as resp:
-                d = json.loads(resp.read().decode())
-            return d.get("exit"), d.get("output", ""), d.get("next")
-        except urllib.error.HTTPError as e:
-            txt = e.read().decode(errors="replace")
-            if e.code == 404:
-                die("địa chỉ sai hoặc khoá đã đổi – sao chép lại BRIDGE_URL từ app")
-            if e.code in (502, 503, 504) and typ in ("ping", "logs"):
-                last = f"HTTP {e.code}: {txt[:200]}"
-            else:
-                die(f"HTTP {e.code} từ đường hầm (app tắt hoặc địa chỉ đã đổi?): {txt[:200]}")
-        except (urllib.error.URLError, ConnectionError, TimeoutError) as e:
-            # lệnh exec có thể đã chạy -> không gửi lại để tránh chạy hai lần
-            if typ not in ("ping", "logs"):
-                die(f"không gọi được {BASE}: {e}")
-            last = str(e)
-        if attempt < RETRIES:
-            time.sleep(2 * (attempt + 1))
-    die(f"không gọi được {BASE}: {last} – app tắt hoặc địa chỉ đã đổi?")
+            ev = json.loads(line)
+            if ev.get("event") != "message":
+                continue
+            rec = json.loads(ev.get("message", ""))
+            url, ts, sig = rec["url"], int(rec["ts"]), rec["sig"]
+        except (ValueError, KeyError, TypeError):
+            continue
+        if hmac.compare_digest(_sign_pointer(ts, url), str(sig)) and ts > best_ts:
+            best_ts, best = ts, url.rstrip("/")
+    return best
 
 
-# ───────── lệnh ─────────
+def candidates():
+    """Tunnel URLs to try, in order; the lookup only happens when the earlier ones fail."""
+    seen = []
+
+    def emit(url):
+        if url and url not in seen:
+            seen.append(url)
+            return True
+        return False
+
+    if BRIDGE_ID:
+        cached = _cached_url()
+        if emit(cached):
+            yield cached
+        try:
+            found = lookup()
+        except Exception as e:  # rendezvous unreachable: fall through to BRIDGE_URL
+            found = None
+            print(f"(fixed address lookup failed: {e})", file=sys.stderr)
+        if emit(found):
+            yield found
+    if emit(DIRECT_URL):
+        yield DIRECT_URL
+
+
+# ───────── protocol ─────────
+
+def _signed(typ, cmd, timeout):
+    seq = int(time.time() * 1000)
+    nonce = secrets.token_hex(12)
+    msg = f"{seq}\n{seq}\n{typ}\n{nonce}\n{cmd}".encode()
+    sig = hmac.new(PASSWORD.encode(), msg, hashlib.sha256).hexdigest()
+    # the app stops the command before the HTTP request times out
+    return {"seq": seq, "ts": seq, "type": typ, "cmd": cmd, "nonce": nonce, "sig": sig,
+            "timeout": int(max(1, timeout - 5) * 1000)}
+
+
+def _post(base, data, timeout):
+    """POST one signed request. Raises Unreachable when it certainly did not reach the app."""
+    req = urllib.request.Request(f"{base}/cmd", data=data, method="POST",
+                                 headers={"Content-Type": "application/json", "User-Agent": UA})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout + 10) as resp:
+            d = json.loads(resp.read().decode())
+        if not isinstance(d, dict) or "exit" not in d:
+            raise ValueError("not a bridge reply")
+        return d
+    except urllib.error.HTTPError as e:
+        txt = e.read().decode(errors="replace")
+        try:
+            d = json.loads(txt)
+        except ValueError:
+            d = None
+        if isinstance(d, dict) and "exit" in d:
+            return d  # the app answered (bad signature, replay, ...)
+        # anything else comes from the tunnel provider: no such tunnel / app offline
+        raise Unreachable(f"HTTP {e.code} from {base}: {txt[:120].strip()}")
+    except ValueError as e:
+        # some other server answers on this (stale) URL
+        raise Unreachable(f"{base}: {e}")
+    except (urllib.error.URLError, OSError) as e:
+        if isinstance(e, TimeoutError) or isinstance(getattr(e, "reason", None), TimeoutError):
+            # do not fail over: the command may still be running on the phone
+            raise BridgeError(f"no response from {base} within {int(timeout + 10)}s")
+        raise Unreachable(f"{base}: {e}")
+
+
+def call(typ, cmd="", timeout=None):
+    """Send a command; returns (exit, output, next). Raises BridgeError."""
+    timeout = timeout or TIMEOUT
+    # One signed body for all attempts: if an attempt did reach the app, the app rejects the
+    # repeated nonce instead of running the command twice.
+    data = json.dumps(_signed(typ, cmd, timeout)).encode()
+    errors = []
+    for base in candidates():
+        try:
+            d = _post(base, data, timeout)
+        except Unreachable as e:
+            errors.append(str(e))
+            continue
+        if BRIDGE_ID:
+            _store_url(base)
+        return d.get("exit"), d.get("output", ""), d.get("next")
+    hint = "is the bridge running in the app?" if errors else "set BRIDGE_ID (or BRIDGE_URL)"
+    raise BridgeError("; ".join(errors[-2:]) + f" - no reachable tunnel, {hint}")
+
+
+def send(typ, cmd="", timeout=None):
+    try:
+        return call(typ, cmd, timeout)
+    except BridgeError as e:
+        die(str(e))
+
+
+# ───────── commands ─────────
 
 def cmd_exec(args):
     if not args:
-        die("thiếu lệnh")
+        die("missing command")
     code, out, _ = send("exec", " ".join(args))
     sys.stdout.write(out if out.endswith("\n") or not out else out + "\n")
     if code:
-        print(f"[exit {code}]", file=sys.stderr)
+        note = f" ({APP_ERRORS[code]})" if code in APP_ERRORS else ""
+        print(f"[exit {code}{note}]", file=sys.stderr)
     sys.exit(code if isinstance(code, int) and 0 <= code < 256 else 1)
 
 
@@ -77,6 +211,13 @@ def cmd_ping(_):
     code, out, _ = send("ping", timeout=20)
     print(out)
     sys.exit(0 if code == 0 else 1)
+
+
+def cmd_url(_):
+    for base in candidates():
+        print(base)
+        return
+    die("no tunnel URL known")
 
 
 def follow(after):
@@ -87,7 +228,7 @@ def follow(after):
             sys.stdout.flush()
         after = nxt if nxt is not None else after
         if code != 0 and not out:
-            print("(stream đã dừng)", file=sys.stderr)
+            print("(stream stopped)", file=sys.stderr)
             return
         time.sleep(1.5)
 
@@ -97,11 +238,11 @@ def cmd_logcat(args):
     print(out, file=sys.stderr)
     if code:
         sys.exit(1)
-    print("Đang stream (Ctrl+C để ngừng xem). Tắt hẳn: bridge.py stop-logcat", file=sys.stderr)
+    print("Streaming (Ctrl+C to stop watching). Stop the stream: bridge.py stop-logcat", file=sys.stderr)
     try:
         follow(nxt or 0)
     except KeyboardInterrupt:
-        print("\n(ngừng theo dõi)", file=sys.stderr)
+        print("\n(stopped watching)", file=sys.stderr)
 
 
 def cmd_stop(_):
@@ -112,14 +253,14 @@ def main():
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help", "help"):
         print(__doc__)
         return
-    if not BASE:
-        die("thiếu BRIDGE_URL (nút \"Sao chép cho Claude Code\" trong app)")
-    if not BASE.startswith("https://") or BASE.count("/") < 3:
-        die("BRIDGE_URL phải có dạng https://xxxx.lhr.life/<khoá> – sao chép lại từ app")
+    if not PASSWORD:
+        die("BRIDGE_PASSWORD is not set")
+    if not BRIDGE_ID and not DIRECT_URL:
+        die("BRIDGE_ID is not set (use the \"Sao chép cho Claude Code\" button in the app)")
     {
         "exec": cmd_exec, "ping": cmd_ping, "logcat": cmd_logcat,
-        "stop-logcat": cmd_stop,
-    }.get(sys.argv[1], lambda _: die(f"lệnh không rõ: {sys.argv[1]}"))(sys.argv[2:])
+        "stop-logcat": cmd_stop, "url": cmd_url,
+    }.get(sys.argv[1], lambda _: die(f"unknown command: {sys.argv[1]}"))(sys.argv[2:])
 
 
 if __name__ == "__main__":

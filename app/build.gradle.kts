@@ -52,25 +52,25 @@ android {
 }
 
 dependencies {
-    // Hợp đồng với feature.dex (chức năng tự cập nhật). KHÔNG phụ thuộc :feature – lớp của feature
-    // phải nằm ngoài APK để bản tải từ GitHub được nạp thay vì bản cũ.
+    // Contract with feature.dex (self-updating features). Do NOT depend on :feature - its classes must
+    // stay out of the APK's own dex so the copy downloaded from GitHub is loaded instead of a stale one.
     implementation(project(":api"))
 
-    // Các thư viện dưới đây do feature.dex dùng lúc chạy -> APK phải mang theo (đổi = cài APK mới).
-    // ADB client chạy ngay trong app (giao thức ADB + ghép nối không dây)
+    // The libraries below are used by feature.dex at runtime -> the APK must ship them (changing them = new APK).
+    // In-app ADB client (ADB protocol + wireless pairing)
     implementation("com.github.MuntashirAkon:libadb-android:3.1.1")
-    // TLS 1.3 + export keying material cho ghép nối cùng máy
+    // TLS 1.3 + exported keying material for pairing
     implementation("org.conscrypt:conscrypt-android:2.5.3")
-    // Sinh chứng chỉ X.509 tự ký cho khoá ADB (cùng biến thể BouncyCastle mà libadb dùng để tránh trùng lớp)
+    // Self-signed X.509 certificate for the ADB key (same BouncyCastle flavour as libadb to avoid duplicate classes)
     implementation("org.bouncycastle:bcpkix-jdk15to18:1.81")
 
-    // Đường hầm SSH ngược (localhost.run / serveo) chạy ngay trong app
+    // In-app reverse SSH tunnel (localhost.run)
     implementation("com.github.mwiede:jsch:2.28.8")
 
     testImplementation("junit:junit:4.13.2")
 }
 
-/** Đóng feature.dex + feature.json (bản dự phòng đi kèm APK) vào assets. */
+/** Packages feature.dex + feature.json (the fallback copy bundled with the APK) into assets. */
 abstract class FeatureAssets : DefaultTask() {
     @get:InputFiles abstract val source: ConfigurableFileCollection
     @get:OutputDirectory abstract val outputDir: DirectoryProperty

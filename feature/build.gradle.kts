@@ -6,9 +6,9 @@ plugins {
 }
 
 /*
- * Toàn bộ chức năng của app. KHÔNG đóng vào APK dưới dạng lớp thường: được dịch thành feature.dex
- * (task featureDex), APK mang theo một bản làm dự phòng và tự tải bản mới từ GitHub Releases.
- * Thư viện (libadb, jsch, bouncycastle, kotlin) do APK cung cấp lúc chạy -> chỉ compileOnly.
+ * All app features. NOT packaged into the APK as regular classes: compiled to feature.dex (task
+ * featureDex); the APK bundles one copy as a fallback and downloads newer ones from the `live` branch.
+ * Libraries (libadb, jsch, bouncycastle, kotlin) are provided by the APK at runtime -> compileOnly.
  */
 android {
     namespace = "com.zenoue.ccbridge.feature"
@@ -34,22 +34,22 @@ dependencies {
     testImplementation(project(":api"))
     hostLibs.forEach { testImplementation(it) }
     testImplementation("junit:junit:4.13.2")
-    // org.json trong android.jar chỉ là stub -> dùng bản thật cho unit test
+    // org.json in android.jar is only a stub -> use the real one in unit tests
     testImplementation("org.json:json:20240303")
 }
 
-// Số phiên bản chức năng = số commit trên nhánh (CI đặt FEATURE_VERSION), chung cho bản live và bản đi kèm APK.
+// Feature version = commit count on the branch (CI sets FEATURE_VERSION), shared by live and bundled builds.
 val featureVersion = System.getenv("FEATURE_VERSION")?.toIntOrNull() ?: 0
-// Ghi chú = tiêu đề commit; đọc thẳng từ git dạng UTF‑8 (biến môi trường bị JVM giải mã theo locale -> lỗi dấu)
+// Notes = commit subject, read from git as UTF-8 (the JVM decodes env vars with the locale -> mojibake)
 val featureNotes = if (featureVersion <= 0) "" else runCatching {
     val p = ProcessBuilder("git", "log", "-1", "--pretty=%s").directory(rootDir).start()
     p.inputStream.readBytes().toString(Charsets.UTF_8).trim().also { p.waitFor() }
 }.getOrDefault("")
-// Chỉ khi build APK: tag release, để APK cũ (≤ v1.0.8, đọc releases/latest) tìm được feature.dex
+// APK builds only: release tag, so old APKs (<= v1.0.8, which read releases/latest) can find feature.dex
 val releaseTag = System.getenv("RELEASE_TAG") ?: ""
 val featureOut = layout.buildDirectory.dir("outputs/feature")
 
-/** classes.jar của feature -> feature.dex (d8) + feature.json {version, api, sha256, size}. */
+/** feature classes.jar -> feature.dex (d8) + feature.json {version, api, sha256, size, file, notes}. */
 val featureDex = tasks.register("featureDex") {
     val jarTask = tasks.named("bundleLibRuntimeToJarRelease")
     dependsOn(jarTask)
@@ -72,16 +72,16 @@ val featureDex = tasks.register("featureDex") {
         val d8 = File(sdkDir, "build-tools/$buildTools/d8").takeIf { it.exists() }
             ?: File(sdkDir, "build-tools").listFiles()?.map { File(it, "d8") }?.filter { it.exists() }
                 ?.maxByOrNull { it.parentFile.name }
-            ?: throw GradleException("không tìm thấy d8 trong ${sdkDir}/build-tools")
+            ?: throw GradleException("d8 not found in ${sdkDir}/build-tools")
         val androidJar = File(sdkDir, "platforms/android-$compileSdk/android.jar")
         val proc = ProcessBuilder(
             d8.absolutePath, "--release", "--min-api", "26",
             "--lib", androidJar.absolutePath, "--output", tmp.absolutePath, jar.absolutePath,
         ).redirectErrorStream(true).start()
         val log = proc.inputStream.bufferedReader().readText()
-        if (proc.waitFor() != 0) throw GradleException("d8 lỗi:\n$log")
+        if (proc.waitFor() != 0) throw GradleException("d8 failed:\n$log")
         val dex = File(tmp, "classes.dex")
-        if (File(tmp, "classes2.dex").exists()) throw GradleException("feature vượt quá một file dex")
+        if (File(tmp, "classes2.dex").exists()) throw GradleException("feature does not fit in a single dex file")
         dex.copyTo(File(out, "feature.dex"))
         val bytes = dex.readBytes()
         val sha = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }

@@ -1,27 +1,27 @@
 #!/usr/bin/env python3
-"""Tự kiểm tra cầu nối + khả năng ADB trên điện thoại thật (chạy ở phía Claude Code).
+"""Self-test of the bridge and of ADB capabilities on a real phone (runs on the Claude Code side).
 
-  export BRIDGE_URL='https://xxxx.lhr.life/<khoá>'
-  python3 tools/selftest.py            # tất cả
-  python3 tools/selftest.py -k unicode # chỉ test có tên chứa "unicode"
+  export BRIDGE_ID='ccb-...'; export BRIDGE_PASSWORD='...'
+  python3 tools/selftest.py            # everything
+  python3 tools/selftest.py -k unicode # only tests whose name contains "unicode"
 
-Không thay đổi gì trên máy ngoài file tạm trong /data/local/tmp (xoá ngay sau đó).
+Changes nothing on the phone except a temporary file in /data/local/tmp (removed right away).
+Needs "Cho phép mọi lệnh" enabled in the app for the full run.
 """
 import concurrent.futures as cf
-import json
 import os
 import subprocess
 import sys
 import time
-import urllib.error
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-BASE = os.environ.get("BRIDGE_URL", "").rstrip("/")
-results = []
+sys.path.insert(0, HERE)
+import bridge  # noqa: E402
 
 
-def bridge(*args, timeout=None, env=None):
+def run(*args, timeout=None, env=None):
+    """Run bridge.py as a subprocess; returns (exit code, stdout, stderr, seconds)."""
     e = dict(os.environ, **(env or {}))
     t0 = time.time()
     p = subprocess.run([sys.executable, os.path.join(HERE, "bridge.py"), *args],
@@ -29,12 +29,8 @@ def bridge(*args, timeout=None, env=None):
     return p.returncode, p.stdout, p.stderr, time.time() - t0
 
 
-def post(typ, cmd="", timeout=60):
-    body = json.dumps({"type": typ, "cmd": cmd, "timeout": int((timeout - 5) * 1000)}).encode()
-    r = urllib.request.Request(BASE + "/cmd", data=body, method="POST",
-                               headers={"Content-Type": "application/json", "User-Agent": "cc-bridge-selftest"})
-    with urllib.request.urlopen(r, timeout=timeout + 10) as resp:
-        return json.loads(resp.read().decode())
+def ex(cmd, **kw):
+    return run("exec", cmd, **kw)
 
 
 def test(name):
@@ -49,35 +45,38 @@ def check(cond, msg):
         raise AssertionError(msg)
 
 
-def ex(cmd, **kw):
-    return bridge("exec", cmd, **kw)
-
-
-# ───────── kết nối ─────────
+# ───────── connection ─────────
 
 @test("ping")
 def t_ping():
-    code, out, err, _ = bridge("ping")
+    code, out, err, _ = run("ping")
     check(code == 0, f"exit {code}: {out}{err}")
-    check("ADB=true" in out, f"ADB chưa kết nối: {out}")
+    check("adb=true" in out, f"ADB not connected: {out}")
     return out.strip()
+
+
+@test("fixed address resolves")
+def t_lookup():
+    if not bridge.BRIDGE_ID:
+        return "skipped (no BRIDGE_ID)"
+    url = bridge.lookup()
+    check(url and url.startswith("https://"), f"no signed record under {bridge.BRIDGE_ID}")
+    return url
 
 
 @test("health")
 def t_health():
-    with urllib.request.urlopen(BASE + "/health", timeout=20) as r:
+    code, out, err, _ = run("url")
+    check(code == 0, err)
+    with urllib.request.urlopen(out.strip() + "/health", timeout=20) as r:
         body = r.read().decode()
-    check(body.startswith("ok"), body)
+    check(body.startswith("CC Bridge ADB"), body)
 
 
-@test("wrong key -> 404")
-def t_wrong_key():
-    root = BASE.rsplit("/", 1)[0]
-    try:
-        urllib.request.urlopen(urllib.request.Request(root + "/wrongkeywrongkeywrongkey/health"), timeout=20)
-        raise AssertionError("không bị từ chối")
-    except urllib.error.HTTPError as e:
-        check(e.code == 404, f"HTTP {e.code}")
+@test("wrong password rejected")
+def t_wrong_password():
+    code, out, err, _ = ex("echo should-not-run", env={"BRIDGE_PASSWORD": "definitely-wrong-password"})
+    check(code == 1 and "should-not-run" not in out and "-2" in err, repr((code, out, err)))
 
 
 # ───────── exec ─────────
@@ -93,7 +92,7 @@ def t_echo():
 def t_exit():
     for cmd, want in [("true", 0), ("false", 1), ("exit 3", 3), ("nosuchcmd_xyz", 127), ("ls /nonexistent_dir", 1)]:
         code, out, err, _ = ex(cmd)
-        check(code == want, f"{cmd!r}: exit {code} (muốn {want}) {out!r}{err!r}")
+        check(code == want, f"{cmd!r}: exit {code} (want {want}) {out!r}{err!r}")
 
 
 @test("stderr captured")
@@ -135,21 +134,21 @@ def t_misc():
 def t_large():
     code, out, err, dt = ex("seq 1 200000")
     lines = out.split("\n")
-    check(code == 0 and lines[0] == "1" and lines[-2] == "200000", f"exit {code}, {len(lines)} dòng {err[:200]}")
-    return f"{len(out) / 1e6:.1f} MB trong {dt:.1f}s"
+    check(code == 0 and lines[0] == "1" and lines[-2] == "200000", f"exit {code}, {len(lines)} lines {err[:200]}")
+    return f"{len(out) / 1e6:.1f} MB in {dt:.1f}s"
 
 
-@test("timeout -> 124, ADB vẫn sống")
+@test("timeout -> 124, ADB still alive")
 def t_timeout():
     code, out, err, dt = ex("sleep 60", env={"BRIDGE_TIMEOUT": "12"})
     check(code == 124, f"exit {code} {err!r} {dt:.0f}s")
-    check(dt < 30, f"mất {dt:.0f}s")
+    check(dt < 30, f"took {dt:.0f}s")
     code, out, _, _ = ex("echo still-alive")
-    check(code == 0 and out == "still-alive\n", f"sau timeout: {code} {out!r}")
+    check(code == 0 and out == "still-alive\n", f"after timeout: {code} {out!r}")
     return f"{dt:.0f}s"
 
 
-@test("song song x6")
+@test("parallel x6")
 def t_parallel():
     with cf.ThreadPoolExecutor(6) as pool:
         futs = [pool.submit(ex, f"echo p{i}; sleep 1") for i in range(6)]
@@ -158,9 +157,9 @@ def t_parallel():
         check(code == 0 and out == f"p{i}\n", f"#{i}: {code} {out!r} {err!r}")
 
 
-# ───────── khả năng ADB ─────────
+# ───────── ADB capabilities ─────────
 
-@test("adb: thông tin máy")
+@test("adb: device info")
 def t_props():
     code, out, _, _ = ex("getprop ro.build.version.release; getprop ro.product.model; id -u")
     check(code == 0 and out.strip().split("\n")[-1] == "2000", repr(out))
@@ -192,25 +191,25 @@ def t_logcat_dump():
 
 @test("logcat stream")
 def t_logcat_stream():
-    r = post("logcat_start", "logcat -v brief -T 1", timeout=30)
-    check(r.get("exit") == 0, repr(r))
-    after = r.get("next") or 0
+    code, out, nxt = bridge.call("logcat_start", "logcat -v brief -T 1", timeout=30)
+    check(code == 0, repr((code, out)))
+    after = nxt or 0
     ex("log -t CCBSELFTEST marker-12345")
     got = ""
     for _ in range(10):
         time.sleep(1)
-        r = post("logs", str(after), timeout=20)
-        after = r.get("next", after)
-        got += r.get("output", "")
+        _, out, nxt = bridge.call("logs", str(after), timeout=20)
+        after = nxt if nxt is not None else after
+        got += out
         if "marker-12345" in got:
             break
-    post("logcat_stop", timeout=20)
-    check("marker-12345" in got, f"không thấy dòng log, nhận {len(got)} ký tự")
+    bridge.call("logcat_stop", timeout=20)
+    check("marker-12345" in got, f"log line not seen, got {len(got)} chars")
 
 
 def main():
-    if not BASE:
-        sys.exit("thiếu BRIDGE_URL")
+    if not bridge.PASSWORD or not (bridge.BRIDGE_ID or bridge.DIRECT_URL):
+        sys.exit("BRIDGE_ID and BRIDGE_PASSWORD must be set")
     only = sys.argv[sys.argv.index("-k") + 1] if "-k" in sys.argv else ""
     tests = [v for v in globals().values() if callable(v) and hasattr(v, "test_name")]
     fails = 0
@@ -224,7 +223,7 @@ def main():
         except Exception as e:
             fails += 1
             print(f"FAIL  {fn.test_name}: {e}  [{time.time() - t0:.1f}s]", flush=True)
-    print(f"\n{'OK' if not fails else f'{fails} lỗi'}")
+    print(f"\n{'OK' if not fails else f'{fails} failed'}")
     sys.exit(1 if fails else 0)
 
 

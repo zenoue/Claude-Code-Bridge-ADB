@@ -44,52 +44,115 @@ class ConsoleTest {
     }
 }
 
+class CryptoTest {
+    @Test fun hmacKnownVector() {
+        // HMAC-SHA256(key="key", msg="The quick brown fox jumps over the lazy dog")
+        assertEquals(
+            "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8",
+            Crypto.hmacHex("key", "The quick brown fox jumps over the lazy dog")
+        )
+    }
+
+    @Test fun signVerifyRoundTrip() {
+        val sig = Crypto.sign("s3cret", 5, 1700000000000, "exec", "dumpsys battery", "n1")
+        assertTrue(Crypto.verify("s3cret", 5, 1700000000000, "exec", "dumpsys battery", "n1", sig))
+        assertTrue(Crypto.verify("s3cret", 5, 1700000000000, "exec", "dumpsys battery", "n1", sig.uppercase()))
+    }
+
+    @Test fun wrongPasswordOrTamperedFieldsFail() {
+        val sig = Crypto.sign("s3cret", 5, 1700000000000, "exec", "dumpsys battery", "n1")
+        assertFalse(Crypto.verify("other", 5, 1700000000000, "exec", "dumpsys battery", "n1", sig))
+        assertFalse(Crypto.verify("s3cret", 6, 1700000000000, "exec", "dumpsys battery", "n1", sig))
+        assertFalse(Crypto.verify("s3cret", 5, 1700000000000, "exec", "rm -rf /", "n1", sig))
+        assertFalse(Crypto.verify("s3cret", 5, 1700000000000, "ping", "dumpsys battery", "n1", sig))
+    }
+
+    @Test fun constEq() {
+        assertTrue(Crypto.constEq("abc", "abc"))
+        assertFalse(Crypto.constEq("abc", "abd"))
+        assertFalse(Crypto.constEq("abc", "ab"))
+    }
+}
+
 class HttpApiTest {
-    private val key = "k3yABCDEFGHJKLMNPQRSTUVW"
-    private val api = HttpApi({ key }, { type, cmd, t -> HttpApi.Reply(0, "$type:$cmd:$t") })
+    private val pw = "testpassword12"
+    private var clock = 1_800_000_000_000L
+    private val api = HttpApi({ pw }, { type, cmd, t -> HttpApi.Reply(0, "$type:$cmd:$t") }, { clock })
 
-    private fun req(method: String, path: String, body: String = "") =
-        api.handle(LocalServer.Request(method, path, emptyMap(), body))
+    private fun req(cmd: String, nonce: String = "nonce-" + cmd.hashCode(), ts: Long = clock, password: String = pw, timeout: Long? = null): LocalServer.Response {
+        val sig = Crypto.sign(password, ts, ts, "exec", cmd, nonce)
+        val t = if (timeout != null) ",\"timeout\":$timeout" else ""
+        val body = "{\"seq\":$ts,\"ts\":$ts,\"type\":\"exec\",\"cmd\":${LocalServer.jsonStr(cmd)},\"nonce\":\"$nonce\",\"sig\":\"$sig\"$t}"
+        return api.handle(LocalServer.Request("POST", "/cmd", emptyMap(), body))
+    }
 
-    @Test fun commandRunsWithKeyInPath() {
-        val r = req("POST", "/$key/cmd", "{\"type\":\"exec\",\"cmd\":\"dumpsys battery\",\"timeout\":5000}")
+    @Test fun validCommandRuns() {
+        val r = req("dumpsys battery", timeout = 5000)
         assertEquals(200, r.code)
         assertTrue(r.body.contains("exec:dumpsys battery:5000"))
     }
 
-    @Test fun timeoutIsClamped() {
-        val r = req("POST", "/$key/cmd", "{\"cmd\":\"ls\",\"timeout\":5}")
-        assertTrue(r.body.contains("exec:ls:1000"))
+    @Test fun timeoutIsClamped() = assertTrue(req("ls", timeout = 5).body.contains("exec:ls:1000"))
+
+    @Test fun wrongPasswordRejected() {
+        val r = req("ls", password = "otherpassword")
+        assertEquals(401, r.code)
+        assertTrue(r.body.contains("\"exit\":-2"))
     }
 
-    @Test fun wrongOrMissingKeyIs404() {
-        assertEquals(404, req("POST", "/wrongkeywrongkeywrongkey/cmd", "{\"cmd\":\"ls\"}").code)
-        assertEquals(404, req("POST", "/cmd", "{\"cmd\":\"ls\"}").code)
-        assertEquals(404, req("GET", "/${key.dropLast(1)}/health").code)
+    @Test fun replayRejected() {
+        assertEquals(200, req("ls", nonce = "fixednonce1").code)
+        val again = req("ls", nonce = "fixednonce1")
+        assertEquals(409, again.code)
+        assertTrue(again.body.contains("\"exit\":-6"))
     }
 
-    @Test fun emptyKeyNeverMatches() {
-        val open = HttpApi({ "" }, { _, _, _ -> HttpApi.Reply(0, "x") })
-        assertEquals(404, open.handle(LocalServer.Request("POST", "//cmd", emptyMap(), "{}")).code)
+    @Test fun staleRejected() {
+        val r = req("ls", ts = clock - 10 * 60_000)
+        assertEquals(401, r.code)
+        assertTrue(r.body.contains("\"exit\":-5"))
     }
 
-    @Test fun healthAndRoot() {
-        assertEquals(200, req("GET", "/").code)
-        val h = req("GET", "/$key/health?x=1")
+    @Test fun unsignedRejected() =
+        assertEquals(401, api.handle(LocalServer.Request("POST", "/cmd", emptyMap(), "{\"cmd\":\"ls\"}")).code)
+
+    @Test fun healthAndNotFound() {
+        val h = api.handle(LocalServer.Request("GET", "/health?x=1", emptyMap(), ""))
         assertEquals(200, h.code)
         assertTrue(h.body.startsWith(HttpApi.HEALTH_BODY))
-        assertEquals(404, req("GET", "/$key/cmd").code)
+        assertEquals(200, api.handle(LocalServer.Request("GET", "/", emptyMap(), "")).code)
+        assertEquals(404, api.handle(LocalServer.Request("GET", "/x", emptyMap(), "")).code)
     }
 
-    @Test fun badJson() = assertEquals(400, req("POST", "/$key/cmd", "not json").code)
-
-    @Test fun constEq() {
-        assertTrue(HttpApi.constEq("abc", "abc"))
-        assertFalse(HttpApi.constEq("abc", "abd"))
-        assertFalse(HttpApi.constEq("abc", "ab"))
-    }
+    @Test fun badJson() = assertEquals(400, api.handle(LocalServer.Request("POST", "/cmd", emptyMap(), "not json")).code)
 
     @Test fun jsonEscaping() = assertEquals("\"a\\\"b\\n\\u0001\"", LocalServer.jsonStr("a\"b\n\u0001"))
+}
+
+class PointerTest {
+    private val pw = "testpassword12"
+    private fun event(message: String) =
+        "{\"id\":\"x\",\"time\":1,\"event\":\"message\",\"topic\":\"t\",\"message\":${LocalServer.jsonStr(message)}}"
+
+    @Test fun newestValidRecordWins() {
+        val stream = listOf(
+            "{\"id\":\"o\",\"time\":1,\"event\":\"open\",\"topic\":\"t\"}",
+            event(Pointer.encode(pw, "https://old.lhr.life", 1000)),
+            event(Pointer.encode(pw, "https://new.lhr.life", 3000)),
+            event(Pointer.encode(pw, "https://mid.lhr.life", 2000)),
+            "garbage", event("not json"),
+        ).joinToString("\n")
+        assertEquals("https://new.lhr.life", Pointer.latest(pw, stream))
+    }
+
+    @Test fun forgedOrTamperedRecordsIgnored() {
+        val forged = event(Pointer.encode("attackerpassword", "https://evil.example", 9000))
+        val tampered = event(Pointer.encode(pw, "https://good.lhr.life", 5000).replace("good", "evil"))
+        val good = event(Pointer.encode(pw, "https://good.lhr.life", 4000))
+        assertEquals("https://good.lhr.life", Pointer.latest(pw, "$forged\n$tampered\n$good"))
+        assertNull(Pointer.latest(pw, "$forged\n$tampered"))
+        assertNull(Pointer.latest(pw, ""))
+    }
 }
 
 class TunnelParserTest {

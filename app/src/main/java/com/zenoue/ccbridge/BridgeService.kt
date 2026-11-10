@@ -10,7 +10,7 @@ import android.os.Build
 import android.os.IBinder
 import com.zenoue.ccbridge.api.ServiceDelegate
 
-/** Vỏ Service: chuyển vòng đời vào feature (BridgeCore trong feature.dex). */
+/** Service shell: forwards the lifecycle to the feature (BridgeCore inside feature.dex). */
 class BridgeService : Service() {
 
     private var d: ServiceDelegate? = null
@@ -24,7 +24,7 @@ class BridgeService : Service() {
         } catch (t: Throwable) {
             FeatureHost.onFeatureFailure(t)
             d = null
-            // startForegroundService bắt buộc gọi startForeground, kể cả khi sắp dừng
+            // startForegroundService requires a startForeground call, even when about to stop
             foregroundThenStop()
         }
     }

@@ -11,8 +11,9 @@ import android.widget.TextView
 import com.zenoue.ccbridge.api.ActivityDelegate
 
 /**
- * Vỏ Activity: chuyển vòng đời vào feature (MainScreen trong feature.dex).
- * Feature lỗi -> hiện màn hình dự phòng tối giản để quay về bản đi kèm APK.
+ * Activity shell: forwards the lifecycle to the feature (MainScreen inside feature.dex).
+ * If the feature fails, a minimal fallback screen (UI text, Vietnamese) lets the user go back to the
+ * version bundled with the APK.
  */
 class MainActivity : Activity() {
 

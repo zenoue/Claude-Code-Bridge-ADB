@@ -8,25 +8,27 @@ import com.jcraft.jsch.KeyPair
 import com.jcraft.jsch.Session
 import java.io.File
 import java.io.InputStream
-import java.net.HttpURLConnection
-import java.net.URL
 
 /**
- * Đường hầm localhost.run chạy ngay trong app (JSch), tương đương
- * `ssh -R 80:localhost:<port> nokey@localhost.run -- --output json`. Không cần tài khoản.
+ * localhost.run tunnel running inside the app (JSch), equivalent to
+ * `ssh -R 80:localhost:<port> nokey@localhost.run -- --output json`. No account needed.
  *
- *  - Mở kênh bằng `connect()` KHÔNG timeout: JSch khi có timeout sẽ gửi want-reply và đứng chờ
- *    localhost.run xác nhận lệnh exec/shell. localhost.run có thể không trả lời (OpenSSH thì không chờ)
- *    -> lỗi "channel request: timeout". Không chờ reply thì đọc thẳng output như OpenSSH.
- *  - Chờ địa chỉ tối đa [URL_WAIT_MS]; không có thì bỏ phiên, lần sau đổi chế độ JSON <-> text.
- *  - Tự kiểm tra định kỳ bằng chính địa chỉ công khai; hỏng 2 lần liên tiếp -> nối lại ngay.
- *  - [kick] để nối lại tức thì (vd khi đổi Wi‑Fi/4G).
+ *  - The channel is opened with `connect()` WITHOUT a timeout: with a timeout JSch sets want-reply and
+ *    waits for localhost.run to acknowledge the exec/shell request. localhost.run may never answer
+ *    (OpenSSH does not wait either) -> "channel request: timeout". Without it we just read the output.
+ *  - The address must arrive within [URL_WAIT_MS]; otherwise the session is dropped and the next
+ *    attempt switches between JSON (exec) and text (shell) mode.
+ *  - The public URL changes on every reconnect; [Pointer] publishes it behind a fixed address.
+ *  - Self-check: the public URL is probed periodically. The session is only replaced when the probe
+ *    worked before on this URL and then fails [PROBE_FAILS_TO_KICK] times in a row, so a phone that
+ *    cannot reach its own public URL never loops through new addresses.
+ *  - [kick] reconnects immediately (e.g. Wi-Fi <-> mobile data switch).
+ *
+ * [State.message] and error texts are shown in the UI, hence Vietnamese.
  */
 class Tunnel(
     private val localPort: Int,
     private val keyFile: File,
-    /** Đường dẫn (sau địa chỉ gốc) để tự kiểm tra, vd "/<khoá>/health". */
-    private val probePath: () -> String,
     private val host: String = HOST,
     private val port: Int = PORT,
     private val listener: (State) -> Unit,
@@ -60,7 +62,7 @@ class Tunnel(
         emit(State(Phase.STOPPED, null, "Đã dừng"))
     }
 
-    /** Bỏ phiên hiện tại và nối lại ngay (không chờ backoff). */
+    /** Drop the current session and reconnect right away (no backoff). */
     fun kick() {
         if (!alive) return
         kicked = true
@@ -77,7 +79,7 @@ class Tunnel(
         try { session?.disconnect() } catch (_: Throwable) { }
     }
 
-    // ───────── vòng nối lại ─────────
+    // ───────── reconnect loop ─────────
 
     private fun loop() {
         var backoff = MIN_BACKOFF
@@ -98,7 +100,7 @@ class Tunnel(
             if (gotUrl) {
                 if (System.currentTimeMillis() - started > 60_000) backoff = MIN_BACKOFF
             } else if (!kicked) {
-                json = !json // chế độ này không ra địa chỉ -> lần sau thử chế độ kia
+                json = !json // this mode produced no address -> try the other one next time
             }
             val wait = if (kicked) 500L else backoff
             val up = (System.currentTimeMillis() - started) / 1000
@@ -112,7 +114,7 @@ class Tunnel(
         }
     }
 
-    /** Một phiên SSH. Trả true nếu đã nhận được địa chỉ công khai. */
+    /** One SSH session. Returns true if a public address was received. */
     private fun connectOnce(json: Boolean): Boolean {
         emit(State(Phase.CONNECTING, null, "Đang mở đường hầm localhost.run…"))
         val jsch = JSch()
@@ -125,7 +127,7 @@ class Tunnel(
         s.serverAliveCountMax = 3
         session = s
         s.connect(20_000)
-        // như `-R 80:localhost:<port>`: OpenSSH gửi bind address "localhost" khi không ghi host
+        // like `-R 80:localhost:<port>`: OpenSSH sends bind address "localhost" when no host is given
         s.setPortForwardingR("localhost", 80, "127.0.0.1", localPort)
 
         val ch: Channel = if (json) {
@@ -134,11 +136,11 @@ class Tunnel(
             (s.openChannel("shell") as ChannelShell).apply { setPty(false) }
         }
         val input = ch.inputStream
-        ch.connect() // không timeout = không chờ want-reply (xem chú thích lớp)
+        ch.connect() // no timeout = no want-reply wait (see class comment)
 
         val found = waitForUrl(s, ch, input)
         emit(State(Phase.ONLINE, found, "Đường hầm sẵn sàng"))
-        // đọc tiếp để nhận địa chỉ mới (nếu có) và giữ kênh; kênh đóng mà phiên còn thì vẫn giữ
+        // keep reading for a new address (if any); the session stays up even if the channel closes
         var current = found
         val text = StringBuilder()
         val buf = ByteArray(4096)
@@ -161,7 +163,7 @@ class Tunnel(
         return true
     }
 
-    /** Đọc output đến khi thấy địa chỉ; hết [URL_WAIT_MS] hoặc kênh đóng -> ném lỗi kèm output. */
+    /** Read output until an address shows up; throws with the output tail on timeout or channel close. */
     private fun waitForUrl(s: Session, ch: Channel, input: InputStream): String {
         val deadline = System.currentTimeMillis() + URL_WAIT_MS
         val text = StringBuilder()
@@ -199,41 +201,39 @@ class Tunnel(
         kp.dispose()
     }
 
-    // ───────── tự kiểm tra ─────────
+    // ───────── self-check ─────────
 
-    /**
-     * Chỉ ghi nhận, KHÔNG tự bỏ phiên: bỏ phiên = localhost.run cấp địa chỉ mới, người dùng phải sao chép lại.
-     * Phiên SSH chết thật thì keep‑alive (15s × 3) tự phát hiện và nối lại.
-     */
     private fun probeLoop() {
         var bad = 0
+        var provenUrl: String? = null // URL on which a probe has succeeded
         while (alive) {
             try { Thread.sleep(PROBE_EVERY_MS) } catch (_: InterruptedException) { break }
             val st = state
             val u = st.url
             if (st.phase != Phase.ONLINE || u == null) { bad = 0; continue }
-            val err = probe(u + probePath())
+            val err = probe("$u/health")
             if (err == null) {
                 if (bad >= 2) Console.info("Tự kiểm tra địa chỉ: đã phản hồi lại")
+                bad = 0; provenUrl = u
+                continue
+            }
+            bad++
+            if (bad == 2) Console.err("Tự kiểm tra địa chỉ thất bại ($err)")
+            if (bad >= PROBE_FAILS_TO_KICK && provenUrl == u && state.url == u) {
                 bad = 0
-            } else if (++bad == 2) {
-                Console.err("Tự kiểm tra địa chỉ thất bại 2 lần ($err) – vẫn giữ phiên SSH")
+                Console.err("Địa chỉ hầm không còn phản hồi – nối lại")
+                kick()
             }
         }
     }
 
-    /** null = ổn, ngược lại là mô tả lỗi. */
+    /** null = healthy, otherwise a short error description. */
     private fun probe(target: String): String? = try {
-        val c = URL(target).openConnection() as HttpURLConnection
-        c.connectTimeout = 10_000; c.readTimeout = 10_000
-        c.setRequestProperty("User-Agent", "cc-bridge-adb/probe")
-        try {
-            val code = c.responseCode
-            if (code != 200) "HTTP $code"
-            else if (!c.inputStream.bufferedReader().use { it.readText() }.startsWith(HttpApi.HEALTH_BODY)) "nội dung lạ"
-            else null
-        } finally { c.disconnect() }
-    } catch (t: Throwable) { t.javaClass.simpleName + ": " + (t.message ?: "") }
+        val r = Net.request(target, timeoutMs = 10_000)
+        if (r.code != 200) "HTTP ${r.code}"
+        else if (!r.body.startsWith(HttpApi.HEALTH_BODY)) "nội dung lạ"
+        else null
+    } catch (t: Throwable) { Net.describe(t) }
 
     companion object {
         const val HOST = "localhost.run"
@@ -244,10 +244,11 @@ class Tunnel(
         private const val MIN_BACKOFF = 2_000L
         private const val MAX_BACKOFF = 30_000L
         private const val PROBE_EVERY_MS = 45_000L
+        private const val PROBE_FAILS_TO_KICK = 3
     }
 }
 
-/** Đọc địa chỉ công khai từ output của localhost.run (thuần, có unit test). */
+/** Extracts the public address from localhost.run output (pure, unit tested). */
 object TunnelParser {
     private val URL_RE = Regex("https://([A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)+)")
     // --output json: {"event":"tcpip-forward","address":"abc123.lhr.life",...}

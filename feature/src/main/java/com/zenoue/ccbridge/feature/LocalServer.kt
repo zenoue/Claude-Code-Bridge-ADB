@@ -11,8 +11,8 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 /**
- * HTTP/1.1 tối giản, chỉ lắng nghe 127.0.0.1 (không lộ ra mạng LAN).
- * Đường hầm SSH chuyển tiếp kết nối từ Internet vào cổng này.
+ * Minimal HTTP/1.1 server bound to 127.0.0.1 only (never exposed to the LAN).
+ * The SSH tunnel forwards connections from the Internet to this port.
  */
 class LocalServer(private val port: Int, private val handler: (Request) -> Response) {
 
@@ -114,7 +114,7 @@ class LocalServer(private val port: Int, private val handler: (Request) -> Respo
             404 -> "Not Found"; 409 -> "Conflict"; 413 -> "Payload Too Large"; else -> "Error"
         }
 
-        /** Đọc một dòng kết thúc bằng \n (bỏ \r), tối đa 16 KB. */
+        /** Read one \n-terminated line (dropping \r), at most 16 KB. */
         private fun readLine(i: InputStream): String? {
             val b = ByteArrayOutputStream()
             while (true) {

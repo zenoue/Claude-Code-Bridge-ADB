@@ -2,15 +2,13 @@
 
 REPLY=0       drop channel-request replies (localhost.run behaviour that caused "channel request: timeout")
 SILENT_EXEC=1 print nothing for exec (forces the shell fallback)
-KEY=<key>     URL key used for the forwarded GET /<key>/health
 
   python3 tools/mock_lhr.py 2222 &
-  MOCK_SSH_PORT=2222 KEY=testkeytestkeytestkey123 ./gradlew testDebugUnitTest --tests '*TunnelLiveTest' -i
+  MOCK_SSH_PORT=2222 ./gradlew testDebugUnitTest --tests '*TunnelLiveTest' -i
 """
 import os, socket, sys, threading, time, paramiko
 
 PORT = int(sys.argv[1]); REPLY = os.environ.get("REPLY", "1") == "1"
-KEY = os.environ.get("KEY", "")
 host_key = paramiko.RSAKey.generate(2048)
 fwd = {}
 
@@ -40,7 +38,7 @@ class Srv(paramiko.ServerInterface):
         time.sleep(0.5)
         try:
             fc = self.t.open_forwarded_tcpip_channel(("1.2.3.4", 5555), fwd["a"])
-            fc.sendall(f"GET /{KEY}/health HTTP/1.1\r\nHost: abc123.lhr.life\r\n\r\n".encode())
+            fc.sendall(b"GET /health HTTP/1.1\r\nHost: abc123.lhr.life\r\n\r\n")
             data = b""
             while True:
                 d = fc.recv(4096)

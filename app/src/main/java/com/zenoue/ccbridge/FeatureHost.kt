@@ -19,16 +19,26 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicBoolean
+import javax.net.ssl.HttpsURLConnection
+import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLException
+import javax.net.ssl.SSLSocketFactory
+import javax.net.ssl.TrustManagerFactory
 
 /**
- * Nạp và tự cập nhật feature.dex (toàn bộ chức năng của app) – phần vỏ APK không đổi.
+ * Loads and self-updates feature.dex (all app features) - the APK shell itself never changes.
  *
- *  - Bản đi kèm APK (assets/feature.dex) luôn có, dùng khi chưa tải gì hoặc bản tải về lỗi.
- *  - Bản mới lấy từ nhánh `live` (CI đẩy lên mỗi khi code chức năng đổi, không tạo release):
- *    raw.githubusercontent.com/<repo>/live/feature.json -> {version, api, sha256, file, notes}
- *    rồi tải live/<file>, kiểm SHA‑256, lưu read‑only (bắt buộc từ Android 14).
- *  - Chỉ nạp bản có cùng [API_VERSION] với APK. Bản tải về gây crash -> đánh dấu hỏng, quay về bản đi kèm.
- *  - Lớp đã nạp không gỡ được khỏi tiến trình -> áp dụng bản mới = khởi động lại app ([applyUpdate]).
+ *  - The copy bundled with the APK (assets/feature.dex) is always there; it is used until something
+ *    newer is downloaded, or when a downloaded copy fails.
+ *  - New versions come from the `live` branch (pushed by CI whenever feature code changes, no release):
+ *    feature.json -> {version, api, sha256, file, notes}, then <file>; SHA-256 is verified and the file
+ *    is stored read-only (required since Android 14). Several mirrors are tried because
+ *    raw.githubusercontent.com is unreachable on some networks.
+ *  - Only a feature with the same [API_VERSION] as the APK is loaded. A downloaded copy that crashes is
+ *    marked bad and the bundled copy is used again.
+ *  - Loaded classes cannot be unloaded -> applying a new version means restarting the app ([applyUpdate]).
+ *
+ * Status messages passed to [publish] are shown in the UI, hence Vietnamese.
  */
 object FeatureHost : HostApi {
     private const val CHECK_EVERY_MS = 30 * 60_000L
@@ -68,11 +78,11 @@ object FeatureHost : HostApi {
     override fun serviceIntent(): Intent = Intent(application, BridgeService::class.java)
     override fun activityIntent(): Intent = Intent(application, MainActivity::class.java)
 
-    // ───────── nạp ─────────
+    // ───────── loading ─────────
 
     private class Candidate(val version: Int, val file: File, val source: String)
 
-    /** Nạp feature một lần mỗi tiến trình: bản GitHub nếu mới hơn & hợp lệ, không thì bản đi kèm. */
+    /** Load the feature once per process: the GitHub copy if newer and valid, otherwise the bundled one. */
     @Synchronized fun entry(): FeatureEntry {
         entryRef?.let { return it }
         val bundled = bundled()
@@ -112,16 +122,16 @@ object FeatureHost : HostApi {
         return Candidate(v, f, "github")
     }
 
-    /** Android 14+: file nạp động phải read‑only (đặt ngay khi mở luồng ghi, như ví dụ của Google). */
+    /** Android 14+: dynamically loaded files must be read-only (set right after opening, as in Google's sample). */
     private fun writeReadOnly(target: File, bytes: ByteArray) {
         val tmp = File(target.parentFile, target.name + ".tmp")
         tmp.delete()
         FileOutputStream(tmp).use { os -> tmp.setReadOnly(); os.write(bytes) }
         target.delete()
-        if (!tmp.renameTo(target)) throw IllegalStateException("không ghi được ${target.name}")
+        if (!tmp.renameTo(target)) throw IllegalStateException("cannot write ${target.name}")
     }
 
-    // ───────── lỗi & đánh dấu hỏng ─────────
+    // ───────── failures ─────────
 
     private fun isBad(v: Int) = prefs.getBoolean("bad_$v", false)
 
@@ -131,13 +141,13 @@ object FeatureHost : HostApi {
         File(dir, "github-$v.dex").delete()
     }
 
-    /** Feature bản GitHub ném lỗi qua vòng đời Activity/Service -> lần sau dùng bản đi kèm. */
+    /** The GitHub copy threw through the Activity/Service lifecycle -> use the bundled copy next time. */
     fun onFeatureFailure(t: Throwable) {
         lastFailure = t
         if (featureSource == "github") markBad(featureVersion, t)
     }
 
-    /** Crash không bắt được mà có dấu vết code feature -> đánh dấu bản GitHub hỏng. */
+    /** Uncaught crash with feature code in the stack trace -> mark the GitHub copy as bad. */
     fun onCrash(t: Throwable) {
         if (!::prefs.isInitialized || featureSource != "github") return
         var c: Throwable? = t
@@ -149,7 +159,7 @@ object FeatureHost : HostApi {
         }
     }
 
-    // ───────── cập nhật ─────────
+    // ───────── updating ─────────
 
     override fun updateInfo(): UpdateInfo = info
 
@@ -181,9 +191,7 @@ object FeatureHost : HostApi {
     }
 
     private fun doCheck() {
-        val base = "https://raw.githubusercontent.com/$repo/$LIVE_BRANCH/"
-        // ?t= để vượt cache CDN (~5 phút) của raw.githubusercontent.com
-        val meta = JSONObject(get(base + "feature.json?t=" + System.currentTimeMillis(), 64 * 1024).decodeToString())
+        val meta = JSONObject(fetch("feature.json", 64 * 1024).decodeToString())
         val v = meta.getInt("version")
         val api = meta.getInt("api")
         val now = System.currentTimeMillis()
@@ -191,7 +199,7 @@ object FeatureHost : HostApi {
         when {
             api > API_VERSION -> publish("need_apk",
                 "Có chức năng #$v nhưng cần APK mới (API $api, APK đang là API $API_VERSION) – tải APK ở Releases", checkedAt = now)
-            // bản live cũ hơn APK (API thấp hơn) -> không dùng được, bản đi kèm APK đã mới hơn
+            // live copy targets an older API than this APK -> unusable; the bundled copy is newer anyway
             api < API_VERSION -> publish("uptodate", "Đang dùng bản mới nhất (#$featureVersion)", checkedAt = now)
             v <= have -> if (info.pending > 0) publish("downloaded", info.message, checkedAt = now)
                 else publish("uptodate", "Đang dùng bản mới nhất (#$featureVersion)", checkedAt = now)
@@ -199,15 +207,15 @@ object FeatureHost : HostApi {
             else -> {
                 publish("checking", "Đang tải chức năng #$v…")
                 val file = meta.optString("file", "feature-$v.dex")
-                if (!Regex("[A-Za-z0-9._-]+").matches(file)) throw IllegalStateException("tên file không hợp lệ: $file")
-                val bytes = get(base + file, MAX_DEX)
+                if (!Regex("[A-Za-z0-9._-]+").matches(file)) throw IllegalStateException("invalid file name: $file")
+                val bytes = fetch(file, MAX_DEX)
                 val sha = meta.getString("sha256")
-                if (sha256(bytes) != sha) throw IllegalStateException("SHA‑256 không khớp (bản phát hành đang cập nhật?)")
+                if (sha256(bytes) != sha) throw IllegalStateException("SHA-256 mismatch (update being published?)")
                 writeReadOnly(File(dir, "github-$v.dex"), bytes)
                 val notes = meta.optString("notes", "")
                 prefs.edit().putInt("dl_version", v).putInt("dl_api", api).putString("dl_sha", sha)
                     .putString("dl_notes", notes).remove("bad_reason").commit()
-                // dọn bản cũ (trừ bản đang chạy và bản vừa tải)
+                // remove old copies (except the running one and the one just downloaded)
                 dir.listFiles { f -> f.name.startsWith("github-") }?.forEach {
                     if (it.name != "github-$v.dex" && it.name != "github-$featureVersion.dex") it.delete()
                 }
@@ -237,15 +245,58 @@ object FeatureHost : HostApi {
         publish("downloaded", "Sẽ dùng bản đi kèm APK sau khi khởi động lại", -1)
     }
 
-    // ───────── tiện ích ─────────
+    // ───────── helpers ─────────
 
-    private fun get(url: String, max: Int): ByteArray {
+    private class Mirror(val name: String, val url: (file: String) -> String, val headers: Map<String, String> = emptyMap())
+
+    /** Where a file of the `live` branch can be fetched from, in order of preference. */
+    private val mirrors: List<Mirror> get() = listOf(
+        // ?t= defeats the ~5 minute CDN cache
+        Mirror("raw", { "https://raw.githubusercontent.com/$repo/$LIVE_BRANCH/$it?t=${System.currentTimeMillis()}" }),
+        Mirror("api", { "https://api.github.com/repos/$repo/contents/$it?ref=$LIVE_BRANCH" },
+            mapOf("Accept" to "application/vnd.github.raw")),
+        // may lag behind by a few hours; integrity is still checked by SHA-256
+        Mirror("jsdelivr", { "https://cdn.jsdelivr.net/gh/$repo@$LIVE_BRANCH/$it" }),
+    )
+
+    private fun fetch(file: String, max: Int): ByteArray {
+        val errors = ArrayList<String>()
+        for (m in mirrors) {
+            try { return get(m.url(file), m.headers, max) } catch (t: Throwable) {
+                errors.add("${m.name}: ${t.javaClass.simpleName} ${t.message ?: ""}".trim())
+            }
+        }
+        throw IllegalStateException(errors.joinToString(" | "))
+    }
+
+    /**
+     * The bundled Conscrypt is the default TLS stack of this app (see [App]); if a handshake fails
+     * with it, retry once with the platform's own TLS provider.
+     */
+    private val platformTls: SSLSocketFactory? by lazy {
+        try {
+            val tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm(), "AndroidOpenSSL")
+            tmf.init(null as java.security.KeyStore?)
+            SSLContext.getInstance("TLS", "AndroidOpenSSL").apply { init(null, tmf.trustManagers, null) }.socketFactory
+        } catch (_: Throwable) { null }
+    }
+
+    private fun get(url: String, headers: Map<String, String>, max: Int): ByteArray = try {
+        getOnce(url, headers, max, null)
+    } catch (e: SSLException) {
+        val f = platformTls ?: throw e
+        getOnce(url, headers, max, f)
+    }
+
+    private fun getOnce(url: String, headers: Map<String, String>, max: Int, tls: SSLSocketFactory?): ByteArray {
         val c = URL(url).openConnection() as HttpURLConnection
+        if (tls != null && c is HttpsURLConnection) c.sslSocketFactory = tls
         c.connectTimeout = 15_000; c.readTimeout = 30_000
         c.instanceFollowRedirects = true
         c.setRequestProperty("User-Agent", "cc-bridge-adb/${BuildConfig.VERSION_NAME}")
+        headers.forEach { (k, v) -> c.setRequestProperty(k, v) }
         try {
-            if (c.responseCode != 200) throw IllegalStateException("HTTP ${c.responseCode} từ ${URL(url).path}")
+            if (c.responseCode != 200) throw IllegalStateException("HTTP ${c.responseCode}")
             c.inputStream.use { inp ->
                 val out = ByteArrayOutputStream()
                 val buf = ByteArray(16 * 1024)
@@ -253,7 +304,7 @@ object FeatureHost : HostApi {
                     val n = inp.read(buf)
                     if (n < 0) break
                     out.write(buf, 0, n)
-                    if (out.size() > max) throw IllegalStateException("file quá lớn")
+                    if (out.size() > max) throw IllegalStateException("file too large")
                 }
                 return out.toByteArray()
             }

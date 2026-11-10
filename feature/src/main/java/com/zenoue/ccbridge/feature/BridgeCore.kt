@@ -16,8 +16,12 @@ import android.os.PowerManager
 import com.zenoue.ccbridge.api.ServiceDelegate
 
 /**
- * Lõi dịch vụ nền (chạy trong feature.dex, APK chỉ chuyển tiếp vòng đời Service vào đây): server HTTP 127.0.0.1:<port> + đường hầm localhost.run ra địa chỉ https công khai.
- * Claude Code gửi lệnh vào `<địa chỉ>/<khoá>/cmd`; lệnh chạy qua ADB nội bộ.
+ * Core of the foreground service (lives in feature.dex; the APK only forwards the Service lifecycle):
+ * HTTP server on 127.0.0.1:<port> + localhost.run tunnel to a public https URL + [Pointer] that keeps
+ * a fixed address pointing at the current tunnel URL.
+ * Claude Code posts signed commands to `<tunnel url>/cmd`; they run through the in-app ADB client.
+ *
+ * Status texts, notifications and [Console] lines are UI text (Vietnamese).
  */
 class BridgeCore(private val svc: Service) : ContextWrapper(svc), ServiceDelegate {
 
@@ -29,11 +33,14 @@ class BridgeCore(private val svc: Service) : ContextWrapper(svc), ServiceDelegat
         @Volatile var tunnel: Tunnel.State? = null; private set
         @Volatile var onStatus: (() -> Unit)? = null
 
-        /** Địa chỉ gốc của đường hầm (chưa kèm khoá). */
+        @Volatile var pointer: Pointer.State? = null; private set
+        @Volatile private var instance: BridgeCore? = null
+
+        /** Current public tunnel URL (changes on reconnect). */
         val tunnelUrl: String? get() = tunnel?.url
 
-        /** Địa chỉ đầy đủ dán cho Claude Code (kèm khoá). */
-        fun bridgeUrl(cfg: Config): String? = tunnelUrl?.let { "$it/${cfg.urlKey}" }
+        /** Republish the fixed address (bridge id or password changed in the UI). */
+        fun refreshPointer() { instance?.ptr?.refresh() }
 
         fun start(ctx: Context) {
             val i = Host.api.serviceIntent()
@@ -46,6 +53,7 @@ class BridgeCore(private val svc: Service) : ContextWrapper(svc), ServiceDelegat
     private var worker: Thread? = null
     private var server: LocalServer? = null
     private var tun: Tunnel? = null
+    private var ptr: Pointer? = null
     private var wake: PowerManager.WakeLock? = null
     private var netCb: ConnectivityManager.NetworkCallback? = null
 
@@ -53,8 +61,8 @@ class BridgeCore(private val svc: Service) : ContextWrapper(svc), ServiceDelegat
         createChannel()
         if (Build.VERSION.SDK_INT >= 34) svc.startForeground(NOTIF_ID, notif("Đang khởi động…"), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         else svc.startForeground(NOTIF_ID, notif("Đang khởi động…"))
-        alive = true; running = true
-        // giữ CPU khi tắt màn hình để đường hầm không bị ngủ
+        alive = true; running = true; instance = this
+        // keep the CPU awake with the screen off so the tunnel does not stall
         wake = getSystemService(PowerManager::class.java)
             ?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "ccbridge:bridge")?.apply { setReferenceCounted(false); acquire() }
         worker = Thread { loop() }.apply { isDaemon = true; name = "bridge"; start() }
@@ -69,6 +77,8 @@ class BridgeCore(private val svc: Service) : ContextWrapper(svc), ServiceDelegat
         netCb?.let { try { getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(it) } catch (_: Throwable) { } }
         netCb = null
         tun?.stop(); tun = null
+        ptr?.stop(); ptr = null
+        instance = null; pointer = null
         server?.stop(); server = null
         LogStream.stop()
         try { wake?.release() } catch (_: Throwable) { }
@@ -81,8 +91,9 @@ class BridgeCore(private val svc: Service) : ContextWrapper(svc), ServiceDelegat
     private var keptAlive = false
 
     /**
-     * ColorOS/MIUI… hay giết app chạy nền -> app khởi động lại -> đường hầm đổi địa chỉ. App có quyền shell
-     * qua ADB nên tự đưa mình vào danh sách không tối ưu pin / không hạn chế nền (một lần mỗi lần bật cầu nối).
+     * ColorOS/MIUI and friends kill background apps -> the app restarts -> the tunnel gets a new URL.
+     * The app has shell rights through ADB, so it exempts itself from battery optimisation and
+     * background limits (once per bridge start).
      */
     private fun keepAlive() {
         if (keptAlive || !Adb.isConnected(this)) return
@@ -97,7 +108,7 @@ class BridgeCore(private val svc: Service) : ContextWrapper(svc), ServiceDelegat
 
     private fun tryConnectAdb(cfg: Config) {
         if (Adb.isConnected(this)) { keepAlive(); return }
-        // cổng 5555 (không cần Wi‑Fi) trước, rồi mới tới Gỡ lỗi không dây
+        // classic TCP port 5555 (no Wi-Fi needed) first, then wireless debugging
         if (cfg.tcpMode && Adb.tcpPortOpen() && Adb.connect(this, "127.0.0.1", Adb.TCP_PORT)) {
             Console.info("ADB kết nối 127.0.0.1:${Adb.TCP_PORT} (không cần Wi‑Fi)"); return
         }
@@ -128,7 +139,7 @@ class BridgeCore(private val svc: Service) : ContextWrapper(svc), ServiceDelegat
     }
 
     private fun startTunnel(cfg: Config): Boolean {
-        val api = HttpApi({ cfg.urlKey }, { type, cmd, t -> Commands.run(this, cfg, type, cmd, t) })
+        val api = HttpApi({ cfg.password }, { type, cmd, t -> Commands.run(this, cfg, type, cmd, t) })
         try {
             server = LocalServer(cfg.httpPort, api::handle).also { it.start() }
         } catch (t: Throwable) {
@@ -136,9 +147,18 @@ class BridgeCore(private val svc: Service) : ContextWrapper(svc), ServiceDelegat
             setStatus("Lỗi cổng ${cfg.httpPort}")
             return false
         }
-        tun = Tunnel(cfg.httpPort, cfg.sshKey, { "/${cfg.urlKey}/health" }) { st ->
+        val p = Pointer(Pointer.DEFAULT_BASE, { cfg.bridgeId }, { cfg.password }) { st ->
+            val old = pointer
+            pointer = st
+            if (st.ok == true && (old?.ok != true || old.url != st.url)) Console.info("Địa chỉ cố định ${cfg.bridgeId} → ${st.url}")
+            else if (st.ok == false && old?.message != st.message) Console.err(st.message)
+            onStatus?.invoke()
+        }
+        ptr = p.also { it.start() }
+        tun = Tunnel(cfg.httpPort, cfg.sshKey) { st ->
             val old = tunnel
             tunnel = st
+            p.set(st.url)
             when {
                 st.phase == Tunnel.Phase.ONLINE && st.url != old?.url -> Console.info("Đường hầm: ${st.url}")
                 st.phase == Tunnel.Phase.RETRYING && st.message != old?.message -> Console.err(st.message)
@@ -148,7 +168,7 @@ class BridgeCore(private val svc: Service) : ContextWrapper(svc), ServiceDelegat
         return true
     }
 
-    /** Đổi mạng (Wi‑Fi ↔ 4G) thì nối lại đường hầm ngay, không chờ SSH keep‑alive hết hạn. */
+    /** On a network switch (Wi-Fi <-> mobile data) reconnect the tunnel right away instead of waiting for SSH keep-alive. */
     private fun watchNetwork() {
         val cm = getSystemService(ConnectivityManager::class.java) ?: return
         val cb = object : ConnectivityManager.NetworkCallback() {

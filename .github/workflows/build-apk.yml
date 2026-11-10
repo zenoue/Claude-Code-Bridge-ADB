@@ -1,7 +1,7 @@
 name: Build APK
 
-# Chỉ build APK + tạo release khi phần vỏ APK đổi (app/, api/, cấu hình Gradle) hoặc bấm chạy tay.
-# Đổi code chức năng (feature/) -> workflow "Live update" lo, không tạo release.
+# Builds the APK and publishes a release only when the APK shell changes (app/, api/, Gradle config)
+# or when started manually. Feature code changes (feature/) are handled by "Live update", without a release.
 on:
   push:
     branches: [main_1]
@@ -28,7 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # cần lịch sử + tag để viết ghi chú, số commit làm phiên bản chức năng
+          fetch-depth: 0   # history + tags for the release notes; commit count = feature version
 
       - uses: actions/setup-java@v4
         with:
@@ -48,14 +48,14 @@ jobs:
       - name: Build APK
         run: ./gradlew --no-daemon assembleDebug
 
-      # feature.json/.dex đính kèm chỉ để APK cũ (≤ v1.0.8, đọc releases/latest) biết có bản mới
+      # feature.json/.dex are attached only so old APKs (<= v1.0.8, which read releases/latest) notice the update
       - name: Collect files
         run: |
           mkdir -p out
           cp app/build/outputs/apk/debug/app-debug.apk "out/CCBridgeADB-v1.0.${{ github.run_number }}.apk"
           cp feature/build/outputs/feature/feature.dex feature/build/outputs/feature/feature.json out/
 
-      # Ghi chú vắn tắt: tiêu đề các commit kể từ bản phát hành trước.
+      # Short notes: commit subjects since the previous release (user-facing text, Vietnamese).
       - name: Release notes
         run: |
           PREV=$(git tag --list 'v1.0.*' --sort=-v:refname | head -n1)

@@ -7,9 +7,9 @@ import java.io.File
 import java.security.Security
 
 /**
- * - Cài Conscrypt làm nhà cung cấp bảo mật đầu tiên (TLS 1.3 + export keying material cho
- *   ghép nối ADB không dây; Conscrypt gói sẵn không bị chặn như Conscrypt ẩn của hệ thống).
- * - Khởi tạo bộ nạp/cập nhật feature (chỉ ở tiến trình chính).
+ * - Installs the bundled Conscrypt as the first security provider (TLS 1.3 + exported keying material
+ *   for wireless ADB pairing; unlike the platform's hidden Conscrypt it is not blocked for apps).
+ * - Initialises the feature loader/updater (main process only).
  */
 class App : Application() {
     override fun onCreate() {

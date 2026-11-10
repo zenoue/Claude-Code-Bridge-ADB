@@ -7,18 +7,19 @@ import android.content.Intent
 import android.os.Bundle
 
 /**
- * Hợp đồng giữa APK (vỏ, cài một lần) và feature.dex (toàn bộ chức năng, tự cập nhật từ GitHub).
+ * Contract between the APK (shell, installed once) and feature.dex (all features, self-updating
+ * from GitHub).
  *
- * Quy tắc: thay đổi bất kỳ chữ ký nào trong file này -> tăng [API_VERSION]. APK chỉ nạp feature.dex
- * có cùng API_VERSION; khác thì báo cần cài APK mới.
+ * Rule: any signature change in this file -> bump [API_VERSION]. The APK only loads a feature.dex
+ * with the same API_VERSION; otherwise it reports that a new APK is required.
  */
 const val API_VERSION = 1
 
-/** Lớp vào của feature.dex, có hàm tạo không tham số. */
+/** Entry class of feature.dex; has a no-arg constructor. */
 const val FEATURE_ENTRY_CLASS = "com.zenoue.ccbridge.feature.Entry"
 
 interface FeatureEntry {
-    /** Gọi một lần khi nạp feature (mỗi tiến trình). */
+    /** Called once when the feature is loaded (per process). */
     fun attach(host: HostApi)
     fun activity(activity: Activity): ActivityDelegate
     fun service(service: Service): ServiceDelegate
@@ -37,38 +38,39 @@ interface ServiceDelegate {
     fun onDestroy()
 }
 
-/** Trạng thái cập nhật feature (bất biến, chỉ đọc). */
+/** Feature update status (immutable). */
 class UpdateInfo(
     /** idle | checking | uptodate | downloaded | need_apk | error */
     val state: String,
+    /** Human readable status, shown in the UI. */
     val message: String,
-    /** Phiên bản feature đã tải sẵn, chờ khởi động lại (0 = không có). */
+    /** Feature version already downloaded and waiting for a restart (0 = none). */
     val pending: Int,
-    /** Thời điểm kiểm tra gần nhất (ms), 0 = chưa. */
+    /** Time of the last check (ms), 0 = never. */
     val checkedAt: Long,
 )
 
-/** Những gì APK cung cấp cho feature. */
+/** What the APK provides to the feature. */
 interface HostApi {
     val app: Application
     val apiVersion: Int
     val apkVersion: String
     val featureVersion: Int
-    /** "bundled" (đi kèm APK) | "github" (đã tải về) */
+    /** "bundled" (shipped with the APK) | "github" (downloaded) */
     val featureSource: String
     val repo: String
-    /** Icon thông báo (tài nguyên nằm trong APK). */
+    /** Notification icon (the resource lives in the APK). */
     val notificationIcon: Int
 
     fun serviceIntent(): Intent
     fun activityIntent(): Intent
 
     fun updateInfo(): UpdateInfo
-    /** Kiểm tra (và tải) bản mới ở nền; [force] = bỏ qua giới hạn tần suất. */
+    /** Check for (and download) a new version in the background; [force] skips the rate limit. */
     fun checkUpdate(force: Boolean)
     fun setUpdateListener(listener: Runnable?)
-    /** Khởi động lại tiến trình để nạp bản đã tải; [restartService] = bật lại cầu nối sau khi mở lại. */
+    /** Restart the process to load the downloaded version; [restartService] = start the bridge again afterwards. */
     fun applyUpdate(restartService: Boolean)
-    /** Bỏ bản đã tải, quay về bản đi kèm APK (cần khởi động lại). */
+    /** Drop the downloaded version and go back to the bundled one (needs a restart). */
     fun resetToBundled()
 }

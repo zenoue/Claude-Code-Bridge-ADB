@@ -1,10 +1,10 @@
 package com.zenoue.ccbridge.feature
 
 /**
- * Cửa sổ lệnh dùng chung cho tab CLI: lệnh gõ tay và lệnh Claude Code gửi đến
- * (qua đường hầm) cùng hiện ở đây, kèm kết quả.
+ * Shared console behind the CLI tab: commands typed by hand and commands sent by Claude Code
+ * (through the tunnel) both show up here with their results. Everything added here is UI text.
  *
- * Mỗi dòng có id tăng dần để UI chỉ vẽ thêm phần mới, kể cả khi bộ đệm đã xoá bớt dòng cũ.
+ * Lines carry increasing ids so the UI can append only what is new, even after old lines were trimmed.
  */
 object Console {
     enum class Kind { CMD_LOCAL, CMD_REMOTE, OUT, INFO, ERR }
@@ -31,12 +31,12 @@ object Console {
 
     fun snapshot(): List<Entry> = synchronized(lines) { ArrayList(lines) }
 
-    /** Các dòng có id > [afterId]. */
+    /** Lines with id > [afterId]. */
     fun since(afterId: Long): List<Entry> = synchronized(lines) { lines.filter { it.id > afterId } }
 
     fun clear() { synchronized(lines) { lines.clear() }; onChange?.invoke() }
 
-    /** Toàn bộ nội dung dạng text (để sao chép). */
+    /** Whole console as text with timestamps (for copying). */
     fun dump(): String {
         val f = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.ROOT)
         return snapshot().joinToString("\n") { e -> "[${f.format(java.util.Date(e.time))}] " + line(e) }

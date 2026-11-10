@@ -5,8 +5,9 @@ import android.os.Build
 import io.github.muntashirakon.adb.AdbStream
 
 /**
- * Xử lý lệnh (đã kiểm chữ ký) Claude Code gửi qua đường hầm.
- * Lệnh và kết quả cũng hiện trong tab CLI.
+ * Handles (already signature-checked) commands sent by Claude Code through the tunnel.
+ * Commands and results are mirrored to the CLI tab; [Console] lines are UI text (Vietnamese),
+ * replies go back to Claude Code (English).
  */
 object Commands {
 
@@ -14,8 +15,9 @@ object Commands {
         return when (type) {
             "ping" -> {
                 Console.info("claude ping")
-                HttpApi.Reply(0, "pong · ADB=${Adb.isConnected(ctx)}${if (Adb.connected) " (" + Adb.mode + ")" else ""} · ${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE} · chỉ-đọc=${!cfg.allowWrite}" +
-                    (if (Host.ready) " · chức năng #${Host.api.featureVersion} (${Host.api.featureSource})" else ""))
+                val adb = if (!Adb.isConnected(ctx)) "false" else if (Adb.viaTcp) "true (tcp ${Adb.TCP_PORT})" else "true (wireless tls)"
+                HttpApi.Reply(0, "pong | adb=$adb | ${Build.MANUFACTURER} ${Build.MODEL} | Android ${Build.VERSION.RELEASE} | read-only=${!cfg.allowWrite}" +
+                    (if (Host.ready) " | feature #${Host.api.featureVersion} (${Host.api.featureSource}) | apk ${Host.api.apkVersion}" else ""))
             }
             "logcat_start" -> {
                 val lc = cmd.ifBlank { "logcat -v time" }
@@ -23,21 +25,21 @@ object Commands {
                 when {
                     !cfg.allowWrite && !Policy.allowed(lc) -> blocked()
                     !Adb.isConnected(ctx) -> noAdb()
-                    else -> { LogStream.start(ctx, lc); HttpApi.Reply(0, "Đã bật stream: $lc", LogStream.lastId()) }
+                    else -> { LogStream.start(ctx, lc); HttpApi.Reply(0, "Stream started: $lc", LogStream.lastId()) }
                 }
             }
-            "logcat_stop" -> { LogStream.stop(); Console.info("claude tắt logcat"); HttpApi.Reply(0, "Đã tắt stream.") }
+            "logcat_stop" -> { LogStream.stop(); Console.info("claude tắt logcat"); HttpApi.Reply(0, "Stream stopped.") }
             "logs" -> {
                 val (next, lines) = LogStream.since(cmd.trim().toLongOrNull() ?: 0L)
                 HttpApi.Reply(if (LogStream.running) 0 else 1, lines.joinToString("") { it + "\n" }, next)
             }
             "exec" -> exec(ctx, cfg, cmd, timeoutMs)
-            else -> HttpApi.Reply(-1, "Loại lệnh không hỗ trợ: $type")
+            else -> HttpApi.Reply(-1, "Unsupported command type: $type")
         }
     }
 
     private fun exec(ctx: Context, cfg: Config, cmd: String, timeoutMs: Long): HttpApi.Reply {
-        if (cmd.isBlank()) return HttpApi.Reply(-1, "Lệnh rỗng.")
+        if (cmd.isBlank()) return HttpApi.Reply(-1, "Empty command.")
         Console.cmdRemote(cmd)
         if (!cfg.allowWrite && !Policy.allowed(cmd)) return blocked()
         if (!Adb.isConnected(ctx)) return noAdb()
@@ -49,16 +51,16 @@ object Commands {
 
     private fun blocked(): HttpApi.Reply {
         Console.err("bị chặn (chỉ-đọc)")
-        return HttpApi.Reply(-3, "Lệnh bị chặn ở chế độ chỉ-đọc (bật \"Cho phép mọi lệnh\" trong app).")
+        return HttpApi.Reply(HttpApi.EXIT_BLOCKED, "Command blocked in read-only mode (enable \"Cho phép mọi lệnh\" in the app).")
     }
 
     private fun noAdb(): HttpApi.Reply {
         Console.err("ADB chưa kết nối")
-        return HttpApi.Reply(-4, "ADB chưa kết nối trên điện thoại.")
+        return HttpApi.Reply(HttpApi.EXIT_NO_ADB, "ADB is not connected on the phone.")
     }
 }
 
-/** Stream logcat chạy nền; các dòng có id tăng dần để Claude đọc tiếp từ chỗ cũ. */
+/** Background logcat stream; lines get increasing ids so the client can resume where it left off. */
 object LogStream {
     private const val MAX = 5000
     private val buf = ArrayDeque<Pair<Long, String>>()
@@ -99,9 +101,9 @@ object LogStream {
         try { st?.close() } catch (_: Throwable) { }
     }
 
-    /** Các dòng có id > [after] (tối đa [max]); trả kèm id cuối để lần sau đọc tiếp. */
+    /** Lines with id > [after] (at most [max]) plus the last id, to continue from next time. */
     fun since(after: Long, max: Int = 2000): Pair<Long, List<String>> = synchronized(buf) {
-        // after vượt quá id hiện có (app vừa khởi động lại) -> đọc từ đầu
+        // after is beyond the newest id (app restarted) -> read from the start
         val a = if (after >= nextId) 0L else after
         val out = ArrayList<String>()
         var last = a
@@ -114,7 +116,7 @@ object LogStream {
     }
 }
 
-/** Danh sách lệnh an toàn (chỉ-đọc) khi chưa bật "Cho phép mọi lệnh". */
+/** Allowlist of safe (read-only) commands used while "allow all commands" is off. */
 object Policy {
     private val safe = setOf(
         "dumpsys", "getprop", "logcat", "cmd", "ls", "cat", "pm", "settings",

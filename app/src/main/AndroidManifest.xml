@@ -28,7 +28,7 @@
             </intent-filter>
         </activity>
 
-        <!-- tiến trình riêng: giết tiến trình chính rồi mở lại app để nạp feature.dex mới -->
+        <!-- separate process: kills the main process and reopens the app to load a new feature.dex -->
         <activity
             android:name=".RestartActivity"
             android:exported="false"
