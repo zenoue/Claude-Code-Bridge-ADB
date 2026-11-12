@@ -189,3 +189,23 @@ class TunnelParserTest {
 
     @Test fun partialOutputHasNoUrlYet() = assertNull(TunnelParser.parse("{\"event\":\"tcpip-forward\",\"addr"))
 }
+
+class ClaudeSetupTest {
+    private val block = ClaudeSetup.block("owner/repo", "ccb-abc", "secretsecret", "https://x.lhr.life")
+
+    @Test fun carriesCredentialsAndDownload() {
+        assertTrue(block.contains("export BRIDGE_ID='ccb-abc'\n"))
+        assertTrue(block.contains("export BRIDGE_PASSWORD='secretsecret'\n"))
+        assertTrue(block.contains("export BRIDGE_URL='https://x.lhr.life'\n"))
+        assertTrue(block.contains("curl -fsSL https://raw.githubusercontent.com/owner/repo/main_1/tools/bridge.py -o ~/.ccbridge/bridge.py"))
+        assertFalse(ClaudeSetup.block("owner/repo", "ccb-abc", "secretsecret", null).contains("BRIDGE_URL="))
+    }
+
+    /** Pasted into a plain shell, the explanation must not run as commands. */
+    @Test fun everyLineIsACommandOrAComment() {
+        for (line in block.lines()) {
+            assertTrue(line, line.startsWith("#") || line.startsWith("export ") ||
+                line.startsWith("mkdir -p ") || line.startsWith("python3 ~/.ccbridge/bridge.py ping"))
+        }
+    }
+}

@@ -341,14 +341,9 @@ class MainScreen(private val activity: Activity) : ContextWrapper(activity), Act
         }
     }
 
-    /** Block pasted into the Claude Code terminal. BRIDGE_URL is only a fallback for the fixed address. */
-    private fun envBlock(): String {
-        val sb = StringBuilder()
-        sb.append("export BRIDGE_ID='${cfg.bridgeId}'\n")
-        sb.append("export BRIDGE_PASSWORD='${cfg.password}'\n")
-        BridgeCore.tunnelUrl?.let { sb.append("export BRIDGE_URL='$it'\n") }
-        return sb.toString().trimEnd()
-    }
+    /** Block pasted into Claude Code: downloads the client and explains it, no repository clone needed. */
+    private fun envBlock(): String =
+        ClaudeSetup.block(Host.api.repo, cfg.bridgeId, cfg.password, BridgeCore.tunnelUrl)
 
     private fun bridgeCard(): LinearLayout {
         val c = ui.card()
@@ -380,7 +375,8 @@ class MainScreen(private val activity: Activity) : ContextWrapper(activity), Act
         c.addView(ui.button("Sao chép cho Claude Code", primary = false) {
             copy(envBlock()); toast("Đã sao chép (có chứa mật khẩu)")
         })
-        c.addView(ui.muted("Chỉ cần sao chép MỘT LẦN: dán vào terminal của Claude Code rồi chạy python3 tools/bridge.py ping. " +
+        c.addView(ui.muted("Chỉ cần sao chép MỘT LẦN rồi dán vào Claude Code – không cần tải repo: " +
+            "đoạn sao chép đã kèm lệnh tải công cụ và hướng dẫn sử dụng cho Claude. " +
             "Hầm nối lại hay đổi địa chỉ thì Claude Code tự tìm theo địa chỉ cố định. " +
             "Chỉ phải sao chép lại khi đổi mật khẩu hoặc đổi địa chỉ cố định."))
         return c

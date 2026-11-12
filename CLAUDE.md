@@ -23,6 +23,8 @@ python3 tools/selftest.py                          # tự kiểm tra cầu nối
 - "no reachable tunnel": cầu nối chưa bật trong app, hoặc mạng phiên này chặn `ntfy.sh` / `*.lhr.life`.
 - Không chạy lệnh không tự kết thúc bằng `exec` (vd `logcat` không có `-d`) – dùng `bridge.py logcat`.
 - Mỗi lệnh người dùng thấy ngay trong tab CLI của app (dòng `claude$`).
+- Người dùng không clone repo: nút *Sao chép cho Claude Code* chép cả lệnh tải `tools/bridge.py` từ nhánh `main_1`
+  về `~/.ccbridge/bridge.py` lẫn hướng dẫn dùng (`ClaudeSetup.kt`). Đổi cách dùng `bridge.py` thì sửa cả đoạn đó.
 
 ## Phát triển
 
@@ -30,6 +32,7 @@ python3 tools/selftest.py                          # tự kiểm tra cầu nối
 - **Ngôn ngữ**: toàn bộ code, comment, log gửi về Claude Code, script, workflow viết bằng **tiếng Anh**. Chỉ chuỗi
   **hiển thị trên giao diện app** (nhãn, nút, toast, thông báo, dòng trong tab CLI, trạng thái) là tiếng Việt.
   Tiêu đề commit và README/CLAUDE.md viết tiếng Việt (tiêu đề commit hiện trong app ở mục cập nhật).
+  README có 3 bản cùng nội dung: `README.md` (tiếng Việt, bản gốc), `README.en.md`, `README.zh.md` – sửa một bản thì sửa cả ba.
 - 3 module:
   - `feature/` (package `com.zenoue.ccbridge.feature`): **toàn bộ chức năng** – giao diện, ADB không dây, đường hầm, lệnh.
     Build thành `feature.dex`; app **tự tải từ nhánh `live`**, người dùng không cần cài lại APK.
