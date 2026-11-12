@@ -3,8 +3,8 @@
 [Tiếng Việt](README.md) · [English](README.en.md) · **简体中文**
 
 [![最新版本](https://img.shields.io/github/v/release/zenoue/Claude-Code-Bridge-ADB?label=APK)](https://github.com/zenoue/Claude-Code-Bridge-ADB/releases/latest)
-[![Build APK](https://github.com/zenoue/Claude-Code-Bridge-ADB/actions/workflows/build-apk.yml/badge.svg?branch=main_1)](https://github.com/zenoue/Claude-Code-Bridge-ADB/actions/workflows/build-apk.yml)
-[![Live update](https://github.com/zenoue/Claude-Code-Bridge-ADB/actions/workflows/live-update.yml/badge.svg?branch=main_1)](https://github.com/zenoue/Claude-Code-Bridge-ADB/actions/workflows/live-update.yml)
+[![Build APK](https://github.com/zenoue/Claude-Code-Bridge-ADB/actions/workflows/build-apk.yml/badge.svg?branch=main)](https://github.com/zenoue/Claude-Code-Bridge-ADB/actions/workflows/build-apk.yml)
+[![Live update](https://github.com/zenoue/Claude-Code-Bridge-ADB/actions/workflows/live-update.yml/badge.svg?branch=main)](https://github.com/zenoue/Claude-Code-Bridge-ADB/actions/workflows/live-update.yml)
 
 **让 Claude Code 通过互联网在你的 Android 手机上执行 `adb shell` 命令。**
 无需 root · 无需电脑 · 无需账号 · 无需自建服务器。
@@ -58,7 +58,7 @@ flowchart LR
 
 ```bash
 # Android phone bridge (https://github.com/zenoue/Claude-Code-Bridge-ADB): run `adb shell` commands on my phone.
-mkdir -p ~/.ccbridge && curl -fsSL https://raw.githubusercontent.com/zenoue/Claude-Code-Bridge-ADB/main_1/tools/bridge.py -o ~/.ccbridge/bridge.py
+mkdir -p ~/.ccbridge && curl -fsSL https://raw.githubusercontent.com/zenoue/Claude-Code-Bridge-ADB/main/tools/bridge.py -o ~/.ccbridge/bridge.py
 export BRIDGE_ID='ccb-…'                     # 固定地址
 export BRIDGE_PASSWORD='…'                   # 用于签名命令的密码
 export BRIDGE_URL='https://xxxx.lhr.life'    # 备用：复制时的隧道地址
@@ -223,5 +223,5 @@ APK（从 Releases 安装一次）               `live` 分支（功能代码变
 ./gradlew assembleDebug       # APK + feature/build/outputs/feature/{feature.dex,feature.json}；需要 Android SDK 35、JDK 17
 ```
 
-只使用 `main_1` 分支；`live` 分支由 CI 生成，不要手动修改。功能版本 `#N` 是 `main_1` 上的提交数，应用内显示的更新说明是提交标题。
+只使用 `main` 分支；`live` 分支由 CI 生成，不要手动修改。功能版本 `#N` 是 `main` 上的提交数，应用内显示的更新说明是提交标题。
 详细约定见 [`CLAUDE.md`](CLAUDE.md)（越南语）。

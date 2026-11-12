@@ -4,7 +4,7 @@ name: Live update
 # The app downloads it from there by itself - NO release, no APK build.
 on:
   push:
-    branches: [main_1]
+    branches: [main]
     paths:
       - 'feature/**'
       - 'api/**'

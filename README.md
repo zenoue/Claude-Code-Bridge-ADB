@@ -3,8 +3,8 @@
 **Tiếng Việt** · [English](README.en.md) · [简体中文](README.zh.md)
 
 [![Bản mới nhất](https://img.shields.io/github/v/release/zenoue/Claude-Code-Bridge-ADB?label=APK)](https://github.com/zenoue/Claude-Code-Bridge-ADB/releases/latest)
-[![Build APK](https://github.com/zenoue/Claude-Code-Bridge-ADB/actions/workflows/build-apk.yml/badge.svg?branch=main_1)](https://github.com/zenoue/Claude-Code-Bridge-ADB/actions/workflows/build-apk.yml)
-[![Live update](https://github.com/zenoue/Claude-Code-Bridge-ADB/actions/workflows/live-update.yml/badge.svg?branch=main_1)](https://github.com/zenoue/Claude-Code-Bridge-ADB/actions/workflows/live-update.yml)
+[![Build APK](https://github.com/zenoue/Claude-Code-Bridge-ADB/actions/workflows/build-apk.yml/badge.svg?branch=main)](https://github.com/zenoue/Claude-Code-Bridge-ADB/actions/workflows/build-apk.yml)
+[![Live update](https://github.com/zenoue/Claude-Code-Bridge-ADB/actions/workflows/live-update.yml/badge.svg?branch=main)](https://github.com/zenoue/Claude-Code-Bridge-ADB/actions/workflows/live-update.yml)
 
 **Cho Claude Code chạy lệnh `adb shell` trên điện thoại Android của bạn, qua Internet.**
 Không root · không PC · không tài khoản · không server riêng.
@@ -57,7 +57,7 @@ flowchart LR
 
 ```bash
 # Android phone bridge (https://github.com/zenoue/Claude-Code-Bridge-ADB): run `adb shell` commands on my phone.
-mkdir -p ~/.ccbridge && curl -fsSL https://raw.githubusercontent.com/zenoue/Claude-Code-Bridge-ADB/main_1/tools/bridge.py -o ~/.ccbridge/bridge.py
+mkdir -p ~/.ccbridge && curl -fsSL https://raw.githubusercontent.com/zenoue/Claude-Code-Bridge-ADB/main/tools/bridge.py -o ~/.ccbridge/bridge.py
 export BRIDGE_ID='ccb-…'                     # địa chỉ cố định
 export BRIDGE_PASSWORD='…'                   # mật khẩu ký lệnh
 export BRIDGE_URL='https://xxxx.lhr.life'    # dự phòng: địa chỉ hầm lúc sao chép
@@ -225,5 +225,5 @@ APK (cài một lần, từ Releases)            nhánh `live` (CI đẩy mỗi 
 ./gradlew assembleDebug       # APK + feature/build/outputs/feature/{feature.dex,feature.json}; cần Android SDK 35, JDK 17
 ```
 
-Chỉ dùng nhánh `main_1`; nhánh `live` do CI tạo, không sửa tay. Phiên bản chức năng `#N` là số commit trên `main_1`,
+Chỉ dùng nhánh `main`; nhánh `live` do CI tạo, không sửa tay. Phiên bản chức năng `#N` là số commit trên `main`,
 ghi chú hiện trong app là tiêu đề commit. Quy ước chi tiết ở [`CLAUDE.md`](CLAUDE.md).

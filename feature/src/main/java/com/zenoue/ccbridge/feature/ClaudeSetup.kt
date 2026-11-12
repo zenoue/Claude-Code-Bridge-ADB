@@ -10,7 +10,7 @@ package com.zenoue.ccbridge.feature
  */
 object ClaudeSetup {
     /** Branch that carries tools/bridge.py (the branch CI builds from). */
-    const val SCRIPT_BRANCH = "main_1"
+    const val SCRIPT_BRANCH = "main"
     const val SCRIPT_PATH = "~/.ccbridge/bridge.py"
 
     fun scriptUrl(repo: String) = "https://raw.githubusercontent.com/$repo/$SCRIPT_BRANCH/tools/bridge.py"

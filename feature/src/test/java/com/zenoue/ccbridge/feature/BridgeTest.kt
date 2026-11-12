@@ -197,7 +197,7 @@ class ClaudeSetupTest {
         assertTrue(block.contains("export BRIDGE_ID='ccb-abc'\n"))
         assertTrue(block.contains("export BRIDGE_PASSWORD='secretsecret'\n"))
         assertTrue(block.contains("export BRIDGE_URL='https://x.lhr.life'\n"))
-        assertTrue(block.contains("curl -fsSL https://raw.githubusercontent.com/owner/repo/main_1/tools/bridge.py -o ~/.ccbridge/bridge.py"))
+        assertTrue(block.contains("curl -fsSL https://raw.githubusercontent.com/owner/repo/main/tools/bridge.py -o ~/.ccbridge/bridge.py"))
         assertFalse(ClaudeSetup.block("owner/repo", "ccb-abc", "secretsecret", null).contains("BRIDGE_URL="))
     }
 

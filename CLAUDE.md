@@ -23,7 +23,7 @@ python3 tools/selftest.py                          # tự kiểm tra cầu nối
 - "no reachable tunnel": cầu nối chưa bật trong app, hoặc mạng phiên này chặn `ntfy.sh` / `*.lhr.life`.
 - Không chạy lệnh không tự kết thúc bằng `exec` (vd `logcat` không có `-d`) – dùng `bridge.py logcat`.
 - Mỗi lệnh người dùng thấy ngay trong tab CLI của app (dòng `claude$`).
-- Người dùng không clone repo: nút *Sao chép cho Claude Code* chép cả lệnh tải `tools/bridge.py` từ nhánh `main_1`
+- Người dùng không clone repo: nút *Sao chép cho Claude Code* chép cả lệnh tải `tools/bridge.py` từ nhánh `main`
   về `~/.ccbridge/bridge.py` lẫn hướng dẫn dùng (`ClaudeSetup.kt`). Đổi cách dùng `bridge.py` thì sửa cả đoạn đó.
 
 ## Phát triển
@@ -41,7 +41,7 @@ python3 tools/selftest.py                          # tự kiểm tra cầu nối
   - `api/`: hợp đồng giữa hai bên (`Api.kt`). Đổi chữ ký nào → **tăng `API_VERSION`** (bản cũ sẽ báo cần APK mới).
 - Ưu tiên sửa trong `feature/`. Cần thư viện mới, quyền mới, tài nguyên mới → phải sửa `app/` (cần APK mới).
   `feature` chỉ `compileOnly` thư viện; thư viện đó phải có trong `app` (`implementation`).
-- Chỉ dùng nhánh `main_1` (nhánh `live` do CI tạo, không sửa tay). Hai workflow tách riêng:
+- Chỉ dùng nhánh `main` (nhánh `live` do CI tạo, không sửa tay). Hai workflow tách riêng:
   - **Live update** (push đổi `feature/` hoặc `api/`): build `feature.dex` → đẩy lên nhánh `live`, **không release**.
     Phiên bản chức năng `#N` = số commit; ghi chú hiện trong app = tiêu đề commit.
   - **Build APK** (push đổi `app/`, `api/`, cấu hình Gradle, hoặc chạy tay): build APK → release `v1.0.N`.
