@@ -54,9 +54,9 @@ object Console {
         if (head.length > half) head = head.take(half) + "…"
         if (tail.length > half) tail = "…" + tail.takeLast(half)
         if (tail.isEmpty() && text.length > OUT_MAX_CHARS) tail = "…" + text.takeLast(half)
-        val note = (if (hiddenLines > 0) "ẩn $hiddenLines dòng" else "ẩn bớt") +
-            (if (text.length >= 1024) ", tổng ${text.length / 1024} KB" else "")
-        return "$head\n  ⋯ ($note – chỉ rút gọn trên màn hình) ⋯\n$tail"
+        val note = (if (hiddenLines > 0) L.t("ẩn $hiddenLines dòng", "$hiddenLines lines hidden") else L.t("ẩn bớt", "partly hidden")) +
+            (if (text.length >= 1024) L.t(", tổng ${text.length / 1024} KB", ", ${text.length / 1024} KB in total") else "")
+        return L.t("$head\n  ⋯ ($note – chỉ rút gọn trên màn hình) ⋯\n$tail", "$head\n  ⋯ ($note – shortened on screen only) ⋯\n$tail")
     }
 
     fun snapshot(): List<Entry> = synchronized(lines) { ArrayList(lines) }

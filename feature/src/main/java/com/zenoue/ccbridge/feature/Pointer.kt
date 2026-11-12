@@ -30,7 +30,7 @@ class Pointer(
     private var publishedId: String? = null
     private var publishedAt = 0L
     private var worker: Thread? = null
-    @Volatile var state = State(null, null, 0, "Chưa đăng địa chỉ"); private set
+    @Volatile var state = State(null, null, 0, L.t("Chưa đăng địa chỉ", "Address not published yet")); private set
 
     fun start() {
         if (alive) return
@@ -77,9 +77,9 @@ class Pointer(
                 if (r.code !in 200..299) throw IllegalStateException("HTTP ${r.code} ${r.body.take(120)}")
                 synchronized(lock) { published = url; publishedId = topic; publishedAt = now }
                 backoff = MIN_BACKOFF
-                emit(State(true, url, now, "Địa chỉ cố định đã trỏ tới hầm hiện tại"))
+                emit(State(true, url, now, L.t("Địa chỉ cố định đã trỏ tới hầm hiện tại", "The fixed address points to the current tunnel")))
             } catch (t: Throwable) {
-                emit(State(false, url, System.currentTimeMillis(), "Chưa đăng được địa chỉ cố định: ${Net.describe(t)}"))
+                emit(State(false, url, System.currentTimeMillis(), L.t("Chưa đăng được địa chỉ cố định: ${Net.describe(t)}", "Could not publish the fixed address: ${Net.describe(t)}")))
                 synchronized(lock) { try { lock.wait(backoff) } catch (_: InterruptedException) { } }
                 backoff = (backoff * 2).coerceAtMost(MAX_BACKOFF)
             }

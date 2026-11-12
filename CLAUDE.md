@@ -29,8 +29,10 @@ python3 tools/selftest.py                          # tự kiểm tra cầu nối
 ## Phát triển
 
 - Kotlin, không dùng AndroidX/Compose; UI dựng bằng code (`UiKit.kt`). Không dùng file tài nguyên trong `feature/`.
-- **Ngôn ngữ**: toàn bộ code, comment, log gửi về Claude Code, script, workflow viết bằng **tiếng Anh**. Chỉ chuỗi
-  **hiển thị trên giao diện app** (nhãn, nút, toast, thông báo, dòng trong tab CLI, trạng thái) là tiếng Việt.
+- **Ngôn ngữ**: toàn bộ code, comment, log gửi về Claude Code, script, workflow viết bằng **tiếng Anh**. Chuỗi
+  **hiển thị trên giao diện app** (nhãn, nút, toast, thông báo, dòng trong tab CLI, trạng thái) có hai bản, viết bằng
+  `L.t("tiếng Việt", "English")` (`L.kt`): máy để tiếng Việt thì hiện tiếng Việt, ngôn ngữ khác hiện tiếng Anh.
+  Thêm chuỗi giao diện mới thì luôn viết đủ cả hai. Chuỗi trong vỏ `app/` hiện chỉ có tiếng Việt.
   Tiêu đề commit và README/CLAUDE.md viết tiếng Việt (tiêu đề commit hiện trong app ở mục cập nhật).
   README có 3 bản cùng nội dung: `README.md` (tiếng Việt, bản gốc), `README.en.md`, `README.zh.md` – sửa một bản thì sửa cả ba.
 - 3 module:

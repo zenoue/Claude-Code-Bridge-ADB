@@ -15,7 +15,7 @@ No root · no PC · no account · no server of your own.
 > commands on a phone, so read the [Security](#security) section, use it only on your own device, and at your own risk.
 
 > [!NOTE]
-> The app's interface is in Vietnamese. Button and tab names below are given in Vietnamese with a translation.
+> The app's interface is in Vietnamese on a Vietnamese phone and in English on any other system language.
 
 ## What it does
 
@@ -40,6 +40,7 @@ flowchart LR
 - **Fixed address**: the tunnel URL changes by itself, but you copy the details to Claude Code only **once**.
 - **Every command is signed with a password** (HMAC‑SHA256); the password never crosses the network.
 - **Features update themselves** from GitHub, without reinstalling the APK.
+- **Two languages**: Vietnamese when the phone is set to Vietnamese, English for every other language.
 
 ## Quick start
 
@@ -49,9 +50,9 @@ flowchart LR
 |:---:|---|
 | **1** | Download `CCBridgeADB-v1.0.N.apk` from [**Releases**](https://github.com/zenoue/Claude-Code-Bridge-ADB/releases/latest) and install it (it installs over an older version). |
 | **2** | Turn on **Wireless debugging**: Settings → Developer options → Wireless debugging. Needs Android 11 or later and a Wi‑Fi connection. |
-| **3** | Open the app → **Connect** tab → card *Gỡ lỗi không dây (ADB)*: **Bước 1 – Ghép nối** (pair: port + 6‑digit code; split screen helps you read the code while typing it), then **Bước 2 – Kết nối** (connect: enter the port shown under "IP address & port", or tap *Tự dò cổng (mDNS)* to find it automatically). |
-| **4** | Tap **Bắt đầu cầu nối** (start the bridge). After a few seconds the tunnel URL appears, with the line "✓ Địa chỉ cố định đã trỏ tới hầm hiện tại" (the fixed address now points to the tunnel). |
-| **5** | Tap **Sao chép cho Claude Code** (copy for Claude Code). |
+| **3** | Open the app → **Connect** tab → card *Wireless debugging (ADB)*: **Step 1 – Pair** (port + 6‑digit code; split screen helps you read the code while typing it), then **Step 2 – Connect** (enter the port shown under "IP address & port", or tap *Find the port (mDNS)* to find it automatically). |
+| **4** | Tap **Start bridge**. After a few seconds the tunnel URL appears, with the line "✓ The fixed address points to the current tunnel". |
+| **5** | Tap **Copy for Claude Code**. |
 
 ### 2. In Claude Code
 
@@ -87,7 +88,7 @@ You only copy again after you **change the password** or **change the fixed addr
 | Tab | What is there |
 |---|---|
 | **CLI** | Type `adb shell` commands and see the results. Commands sent by Claude Code appear here too, prefixed with `claude$`, so you always see what Claude is doing. Quick commands, recall the previous command, copy and clear the log. Long output shows only its first and last 40 lines (Claude Code still receives all of it). |
-| **Connect** | **Cầu nối** (bridge): start/stop, fixed address, current tunnel URL, *Sao chép cho Claude Code*.<br>**Gỡ lỗi không dây (ADB)** (wireless debugging): pair, connect, *Bật ADB không cần Wi‑Fi* (ADB without Wi‑Fi).<br>**Mật khẩu & chế độ** (password & mode): change the password, change the fixed address, *Cho phép mọi lệnh* (allow all commands).<br>**Cập nhật chức năng** (feature updates): check, apply, go back to the version bundled with the APK. |
+| **Connect** | **Bridge**: start/stop, fixed address, current tunnel URL, *Copy for Claude Code*.<br>**Wireless debugging (ADB)**: pair, connect, *Enable ADB without Wi‑Fi*.<br>**Password & mode**: change the password, change the fixed address, *Allow all commands*.<br>**Feature updates**: check, apply, go back to the version bundled with the APK. |
 
 ## `bridge.py` commands
 
@@ -121,23 +122,23 @@ Only Python 3 (standard library) is needed. If you cloned the repository, use `t
 |---|---|
 | **Password** | At least 12 characters; the app generates a random 24-character one. It only signs each command and each address record with HMAC and is **never sent over the network**. Someone who knows the tunnel URL or the `BRIDGE_ID` but not the password only sees the text `CC Bridge ADB`. |
 | **Replay protection** | The app rejects a command whose timestamp is off by more than 5 minutes or whose `nonce` was already used. |
-| **Read-only mode** | **On by default**, for commands typed in the app and for remote ones: only reading commands are allowed (`dumpsys`, `getprop`, `logcat`, `pm list`…). Turn on *Cho phép mọi lệnh* when you need to write. |
+| **Read-only mode** | **On by default**, for commands typed in the app and for remote ones: only reading commands are allowed (`dumpsys`, `getprop`, `logcat`, `pm list`…). Turn on *Allow all commands* when you need to write. |
 | **Privileges** | Commands run with *shell* rights (uid 2000, like `adb shell`), not root. |
 | **Network** | The server inside the app listens on `127.0.0.1` only; it is not exposed to the LAN. |
 | **Transparency** | Every remote command shows up immediately in the CLI tab. |
 
 > [!CAUTION]
 > localhost.run terminates TLS, so it **can see commands and their output** (it cannot forge commands, as it has no
-> password). Do not run commands that print sensitive data. The "Sao chép cho Claude Code" block **contains the
+> password). Do not run commands that print sensitive data. The "Copy for Claude Code" block **contains the
 > password**; do not paste it anywhere public.
 
 ## Limitations
 
 - **Wi‑Fi**: Android only enables Wireless debugging while on Wi‑Fi (a network without Internet is fine; Internet
-  can go through mobile data). Without Wi‑Fi: while ADB is connected, tap *Bật ADB không cần Wi‑Fi* → adbd opens
+  can go through mobile data). Without Wi‑Fi: while ADB is connected, tap *Enable ADB without Wi‑Fi* → adbd opens
   port `5555` on the phone and the app connects to `127.0.0.1:5555`. It then keeps working with Wi‑Fi off, until
   the phone reboots. The first time the phone asks *Allow USB debugging?*, tap Allow. Close this port on public Wi‑Fi.
-- **The ADB connect port changes** each time Wireless debugging is toggled or the phone reboots → redo step 2 (Bước 2).
+- **The ADB connect port changes** each time Wireless debugging is toggled or the phone reboots → redo Step 2.
 - **Very large output can be cut off by the tunnel** (the free tunnel is speed limited; replies are already
   gzip-compressed). Filter with `| head`, `| tail`, `| grep`, or write to `/data/local/tmp/` on the phone and read it in parts.
 - **Battery**: while the bridge is on, the app runs a foreground service and keeps the phone awake. Turn the bridge off when you are not using it.
@@ -158,7 +159,7 @@ localhost.run's free tier hands out a random domain that changes on every reconn
   `ntfy.sh/<BRIDGE_ID>/json?poll=1&since=all`, takes the newest record **with a valid signature**, and sends the command again.
 - Resending is safe: every attempt carries the same `nonce`, so the app never runs a command twice.
 - Someone who knows the `BRIDGE_ID` but not the password cannot forge a record or run a command (they can only read the tunnel URL).
-- If posting to ntfy.sh fails (blocked network…), the app says so in the *Cầu nối* card; `BRIDGE_URL` still works.
+- If posting to ntfy.sh fails (blocked network…), the app says so in the *Bridge* card; `BRIDGE_URL` still works.
 
 </details>
 
@@ -204,10 +205,10 @@ APK (installed once, from Releases)       `live` branch (pushed by CI whenever f
 ```
 
 - The app checks when it opens, when the bridge starts and every 30 minutes; it downloads the new version, verifies
-  SHA‑256 and stores it read-only (required since Android 14). Tap **Áp dụng ngay** (apply now; Connect →
-  *Cập nhật chức năng*) to restart the app; a running bridge starts again by itself.
+  SHA‑256 and stores it read-only (required since Android 14). Tap **Apply now** (Connect →
+  *Feature updates*) to restart the app; a running bridge starts again by itself.
 - The interface is built in code (no XML, no WebView), so even the interface can be updated through `DexClassLoader`.
-- A downloaded version that crashes is marked bad and the bundled one is used again; there is also a button *Quay về bản đi kèm APK*.
+- A downloaded version that crashes is marked bad and the bundled one is used again; there is also a button *Go back to the bundled version*.
 - Downloads try 3 sources in turn: `raw.githubusercontent.com` → `api.github.com` → `cdn.jsdelivr.net`. Each source's error is shown in the update card.
 - **A new APK is still needed** when `app/` changes (manifest, permissions, icon, libraries) or `API_VERSION` in `api/` changes.
 - Trust: the download comes from the same repository and the same CI as the APK, over HTTPS, with a SHA‑256 check: the same level of trust as the APK file.

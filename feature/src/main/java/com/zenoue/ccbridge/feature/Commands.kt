@@ -28,7 +28,7 @@ object Commands {
                     else -> { LogStream.start(ctx, lc); HttpApi.Reply(0, "Stream started: $lc", LogStream.lastId()) }
                 }
             }
-            "logcat_stop" -> { LogStream.stop(); Console.info("claude tắt logcat"); HttpApi.Reply(0, "Stream stopped.") }
+            "logcat_stop" -> { LogStream.stop(); Console.info(L.t("claude tắt logcat", "claude stopped logcat")); HttpApi.Reply(0, "Stream stopped.") }
             "logs" -> {
                 val (next, lines) = LogStream.since(cmd.trim().toLongOrNull() ?: 0L)
                 HttpApi.Reply(if (LogStream.running) 0 else 1, lines.joinToString("") { it + "\n" }, next)
@@ -46,18 +46,18 @@ object Commands {
         if (!cfg.allowWrite && !Policy.allowed(cmd)) return blocked()
         if (!Adb.isConnected(ctx)) return noAdb()
         val r = try { Adb.run(ctx, cmd, timeoutMs) } catch (t: Throwable) { Adb.onCommandError(ctx, t) }
-        Console.out(r.output.ifBlank { "(không có output)" })
+        Console.out(r.output.ifBlank { L.t("(không có output)", "(no output)") })
         if (r.exit != 0) Console.err("exit ${r.exit}")
         return HttpApi.Reply(r.exit, r.output)
     }
 
     private fun blocked(): HttpApi.Reply {
-        Console.err("bị chặn (chỉ-đọc)")
-        return HttpApi.Reply(HttpApi.EXIT_BLOCKED, "Command blocked in read-only mode (enable \"Cho phép mọi lệnh\" in the app).")
+        Console.err(L.t("bị chặn (chỉ-đọc)", "blocked (read-only)"))
+        return HttpApi.Reply(HttpApi.EXIT_BLOCKED, "Command blocked in read-only mode (turn on \"Allow all commands\" / \"Cho phép mọi lệnh\" in the app).")
     }
 
     private fun noAdb(): HttpApi.Reply {
-        Console.err("ADB chưa kết nối")
+        Console.err(L.t("ADB chưa kết nối", "ADB not connected"))
         return HttpApi.Reply(HttpApi.EXIT_NO_ADB, "ADB is not connected on the phone.")
     }
 }

@@ -41,7 +41,7 @@ class Tunnel(
     @Volatile private var alive = false
     @Volatile private var kicked = false
     @Volatile private var session: Session? = null
-    @Volatile var state = State(Phase.STOPPED, null, "Đã dừng"); private set
+    @Volatile var state = State(Phase.STOPPED, null, L.t("Đã dừng", "Stopped")); private set
     private var worker: Thread? = null
     private var prober: Thread? = null
 
@@ -59,7 +59,7 @@ class Tunnel(
         dropSession()
         synchronized(lock) { lock.notifyAll() }
         worker?.interrupt(); prober?.interrupt()
-        emit(State(Phase.STOPPED, null, "Đã dừng"))
+        emit(State(Phase.STOPPED, null, L.t("Đã dừng", "Stopped")))
     }
 
     /** Drop the current session and reconnect right away (no backoff). */
@@ -104,9 +104,9 @@ class Tunnel(
             }
             val wait = if (kicked) 500L else backoff
             val up = (System.currentTimeMillis() - started) / 1000
-            val why = (error?.let { "Lỗi localhost.run: $it" } ?: "Mất đường hầm localhost.run") +
-                (if (kicked) " (nối lại theo yêu cầu)" else "") + " sau ${up}s"
-            emit(State(Phase.RETRYING, null, "$why – thử lại sau ${wait / 1000}s…"))
+            val why = (error?.let { L.t("Lỗi localhost.run: $it", "localhost.run error: $it") } ?: L.t("Mất đường hầm localhost.run", "localhost.run tunnel lost")) +
+                (if (kicked) L.t(" (nối lại theo yêu cầu)", " (reconnect requested)") else "") + L.t(" sau ${up}s", " after ${up}s")
+            emit(State(Phase.RETRYING, null, L.t("$why – thử lại sau ${wait / 1000}s…", "$why – retrying in ${wait / 1000}s…")))
             synchronized(lock) {
                 if (alive && !kicked) try { lock.wait(wait) } catch (_: InterruptedException) { }
             }
@@ -116,7 +116,7 @@ class Tunnel(
 
     /** One SSH session. Returns true if a public address was received. */
     private fun connectOnce(json: Boolean): Boolean {
-        emit(State(Phase.CONNECTING, null, "Đang mở đường hầm localhost.run…"))
+        emit(State(Phase.CONNECTING, null, L.t("Đang mở đường hầm localhost.run…", "Opening the localhost.run tunnel…")))
         val jsch = JSch()
         ensureKey(jsch)
         jsch.addIdentity(keyFile.absolutePath)
@@ -139,7 +139,7 @@ class Tunnel(
         ch.connect() // no timeout = no want-reply wait (see class comment)
 
         val found = waitForUrl(s, ch, input)
-        emit(State(Phase.ONLINE, found, "Đường hầm sẵn sàng"))
+        emit(State(Phase.ONLINE, found, L.t("Đường hầm sẵn sàng", "Tunnel ready")))
         // keep reading for a new address (if any); the session stays up even if the channel closes
         var current = found
         val text = StringBuilder()
@@ -153,7 +153,7 @@ class Tunnel(
                     val u = TunnelParser.parse(text)
                     if (u != null && u != current) {
                         current = u
-                        emit(State(Phase.ONLINE, u, "Đường hầm sẵn sàng (địa chỉ mới)"))
+                        emit(State(Phase.ONLINE, u, L.t("Đường hầm sẵn sàng (địa chỉ mới)", "Tunnel ready (new address)")))
                     }
                 }
             } else {
@@ -181,17 +181,17 @@ class Tunnel(
             }
             if (avail < 0 || ch.isClosed) break
             if (System.currentTimeMillis() > deadline) {
-                throw IllegalStateException("hết ${URL_WAIT_MS / 1000}s chưa nhận được địa chỉ. Output: ${tail(text)}")
+                throw IllegalStateException(L.t("hết ${URL_WAIT_MS / 1000}s chưa nhận được địa chỉ. Output: ${tail(text)}", "no address after ${URL_WAIT_MS / 1000}s. Output: ${tail(text)}"))
             }
             Thread.sleep(150)
         }
-        if (!alive || kicked) throw IllegalStateException("đã dừng")
+        if (!alive || kicked) throw IllegalStateException(L.t("đã dừng", "stopped"))
         throw IllegalStateException(
-            (if (!s.isConnected) "phiên SSH bị đóng" else "kênh bị đóng") + " trước khi có địa chỉ. Output: ${tail(text)}"
+            (if (!s.isConnected) L.t("phiên SSH bị đóng", "SSH session closed") else L.t("kênh bị đóng", "channel closed")) + L.t(" trước khi có địa chỉ. Output: ${tail(text)}", " before an address arrived. Output: ${tail(text)}")
         )
     }
 
-    private fun tail(t: CharSequence) = t.takeLast(240).toString().replace(Regex("\\s+"), " ").trim().ifEmpty { "(trống)" }
+    private fun tail(t: CharSequence) = t.takeLast(240).toString().replace(Regex("\\s+"), " ").trim().ifEmpty { L.t("(trống)", "(empty)") }
 
     private fun ensureKey(jsch: JSch) {
         if (keyFile.exists() && keyFile.length() > 0) return
@@ -213,15 +213,15 @@ class Tunnel(
             if (st.phase != Phase.ONLINE || u == null) { bad = 0; continue }
             val err = probe("$u/health")
             if (err == null) {
-                if (bad >= 2) Console.info("Tự kiểm tra địa chỉ: đã phản hồi lại")
+                if (bad >= 2) Console.info(L.t("Tự kiểm tra địa chỉ: đã phản hồi lại", "Address self-check: answering again"))
                 bad = 0; provenUrl = u
                 continue
             }
             bad++
-            if (bad == 2) Console.err("Tự kiểm tra địa chỉ thất bại ($err)")
+            if (bad == 2) Console.err(L.t("Tự kiểm tra địa chỉ thất bại ($err)", "Address self-check failed ($err)"))
             if (bad >= PROBE_FAILS_TO_KICK && provenUrl == u && state.url == u) {
                 bad = 0
-                Console.err("Địa chỉ hầm không còn phản hồi – nối lại")
+                Console.err(L.t("Địa chỉ hầm không còn phản hồi – nối lại", "The tunnel address stopped answering – reconnecting"))
                 kick()
             }
         }
@@ -231,7 +231,7 @@ class Tunnel(
     private fun probe(target: String): String? = try {
         val r = Net.request(target, timeoutMs = 10_000)
         if (r.code != 200) "HTTP ${r.code}"
-        else if (!r.body.startsWith(HttpApi.HEALTH_BODY)) "nội dung lạ"
+        else if (!r.body.startsWith(HttpApi.HEALTH_BODY)) L.t("nội dung lạ", "unexpected content")
         else null
     } catch (t: Throwable) { Net.describe(t) }
 

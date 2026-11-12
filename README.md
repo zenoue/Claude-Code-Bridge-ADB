@@ -37,6 +37,7 @@ flowchart LR
 - **Địa chỉ cố định**: địa chỉ hầm tự đổi, nhưng bạn chỉ sao chép cho Claude Code **một lần**.
 - **Mỗi lệnh được ký bằng mật khẩu** (HMAC‑SHA256); mật khẩu không bao giờ đi qua mạng.
 - **Tự cập nhật chức năng** từ GitHub, không phải cài lại APK.
+- **Hai ngôn ngữ**: giao diện tiếng Việt khi máy để tiếng Việt, tiếng Anh với mọi ngôn ngữ khác.
 
 ## Bắt đầu nhanh
 

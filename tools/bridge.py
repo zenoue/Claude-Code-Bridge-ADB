@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Claude Code <-> ADB: send adb shell commands to the phone (runs on the Claude Code side).
 
-Environment (from the "Sao chép cho Claude Code" button in the app):
+Environment (from the "Copy for Claude Code" / "Sao chép cho Claude Code" button in the app):
   BRIDGE_ID        fixed address, e.g. ccb-xxxxxxxx. Never changes; the app publishes its current
                    tunnel URL under it, and this tool looks the URL up whenever needed.
   BRIDGE_PASSWORD  shared password. Never sent anywhere; it only signs each command (HMAC-SHA256).
@@ -202,7 +202,7 @@ def call(typ, cmd="", timeout=None):
         raise BridgeError("; ".join(errors[-2:]) + " - no reachable tunnel; is the bridge running in the app?")
     if BRIDGE_ID:
         raise BridgeError(f"no tunnel address published under {BRIDGE_ID} yet (the app has not posted to "
-                          f"{RENDEZVOUS}); check the 'Cầu nối' card in the app, or set BRIDGE_URL")
+                          f"{RENDEZVOUS}); check the 'Bridge' ('Cầu nối') card in the app, or set BRIDGE_URL")
     raise BridgeError("set BRIDGE_ID (or BRIDGE_URL)")
 
 
@@ -279,7 +279,7 @@ def main():
     if not PASSWORD:
         die("BRIDGE_PASSWORD is not set")
     if not BRIDGE_ID and not DIRECT_URL:
-        die("BRIDGE_ID is not set (use the \"Sao chép cho Claude Code\" button in the app)")
+        die("BRIDGE_ID is not set (use the \"Copy for Claude Code\" button in the app)")
     {
         "exec": cmd_exec, "ping": cmd_ping, "logcat": cmd_logcat,
         "stop-logcat": cmd_stop, "url": cmd_url, "console": cmd_console,

@@ -96,7 +96,7 @@ object Adb {
     /** Connect to adbd (already paired). [lastError] is shown in the UI, hence Vietnamese. */
     fun connect(ctx: Context, host: String, port: Int): Boolean = try {
         connected = AdbManager.get(ctx).connect(host, port)
-        if (!connected) lastError = "adbd từ chối (chưa ghép nối, sai cổng hoặc chưa bấm Cho phép)"
+        if (!connected) lastError = L.t("adbd từ chối (chưa ghép nối, sai cổng hoặc chưa bấm Cho phép)", "adbd refused (not paired, wrong port, or Allow not tapped)")
         else { lastError = null; viaTcp = port == TCP_PORT }
         connected
     } catch (t: Throwable) { lastError = t.message ?: t.toString(); connected = false; false }
@@ -104,7 +104,7 @@ object Adb {
     /** Discover the connect port through mDNS, then connect (Android 11+). */
     fun autoConnect(ctx: Context, timeoutMs: Long = 8000): Boolean = try {
         connected = AdbManager.get(ctx).connectTls(ctx, timeoutMs)
-        lastError = if (connected) null else "không tìm thấy adbd qua mDNS"
+        lastError = if (connected) null else L.t("không tìm thấy adbd qua mDNS", "adbd not found through mDNS")
         if (connected) viaTcp = false
         connected
     } catch (t: Throwable) { lastError = t.message ?: t.toString(); connected = false; false }
@@ -142,7 +142,7 @@ object Adb {
             try { st.close() } catch (_: Throwable) { }
         }
         disconnect(ctx)
-        return msg.ifEmpty { "(adbd không phản hồi – có thể đã khởi động lại)" }
+        return msg.ifEmpty { L.t("(adbd không phản hồi – có thể đã khởi động lại)", "(adbd did not answer – it may have restarted)") }
     }
 
     /** Connect to 127.0.0.1:<port>, retrying a few times while adbd restarts. */
@@ -151,7 +151,7 @@ object Adb {
             if (tcpPortOpen(port) && connect(ctx, "127.0.0.1", port)) return true
             Thread.sleep(1000)
         }
-        if (lastError == null || !tcpPortOpen(port)) lastError = "cổng $port chưa mở (bấm \"Bật ADB không cần Wi‑Fi\" khi đang có Wi‑Fi)"
+        if (lastError == null || !tcpPortOpen(port)) lastError = L.t("cổng $port chưa mở (bấm \"Bật ADB không cần Wi‑Fi\" khi đang có Wi‑Fi)", "port $port is not open (tap \"Enable ADB without Wi‑Fi\" while on Wi‑Fi)")
         return false
     }
 

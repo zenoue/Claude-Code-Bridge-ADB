@@ -34,6 +34,7 @@ class ConsoleTest {
     @Test fun shortOutputUnchanged() = assertEquals("a\nb", Console.clip("a\nb"))
 
     @Test fun longOutputIsClippedForScreen() {
+        L.forceEnglish = false
         val many = (1..5000).joinToString("\n") { "line $it" }
         val c = Console.clip(many)
         assertTrue(c.startsWith("line 1\n"))
@@ -206,6 +207,23 @@ class ClaudeSetupTest {
         for (line in block.lines()) {
             assertTrue(line, line.startsWith("#") || line.startsWith("export ") ||
                 line.startsWith("mkdir -p ") || line.startsWith("python3 ~/.ccbridge/bridge.py ping"))
+        }
+    }
+}
+
+class LanguageTest {
+    @Test fun followsTheSystemLanguage() {
+        val saved = java.util.Locale.getDefault()
+        try {
+            L.forceEnglish = null
+            java.util.Locale.setDefault(java.util.Locale.forLanguageTag("vi-VN"))
+            assertEquals("Chạy", L.t("Chạy", "Run"))
+            java.util.Locale.setDefault(java.util.Locale.forLanguageTag("zh-CN"))
+            assertEquals("Run", L.t("Chạy", "Run"))
+            java.util.Locale.setDefault(java.util.Locale.US)
+            assertTrue(Console.clip((1..500).joinToString("\n") { "l$it" }).contains("lines hidden"))
+        } finally {
+            java.util.Locale.setDefault(saved)
         }
     }
 }

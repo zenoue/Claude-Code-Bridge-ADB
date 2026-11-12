@@ -29,7 +29,7 @@ class BridgeCore(private val svc: Service) : ContextWrapper(svc), ServiceDelegat
         private const val CHANNEL = "bridge"
         private const val NOTIF_ID = 11
         @Volatile var running = false; private set
-        @Volatile var status = "Chưa chạy"; private set
+        @Volatile var status = L.t("Chưa chạy", "Not running"); private set
         @Volatile var tunnel: Tunnel.State? = null; private set
         @Volatile var onStatus: (() -> Unit)? = null
 
@@ -59,8 +59,8 @@ class BridgeCore(private val svc: Service) : ContextWrapper(svc), ServiceDelegat
 
     override fun onCreate() {
         createChannel()
-        if (Build.VERSION.SDK_INT >= 34) svc.startForeground(NOTIF_ID, notif("Đang khởi động…"), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-        else svc.startForeground(NOTIF_ID, notif("Đang khởi động…"))
+        if (Build.VERSION.SDK_INT >= 34) svc.startForeground(NOTIF_ID, notif(L.t("Đang khởi động…", "Starting…")), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        else svc.startForeground(NOTIF_ID, notif(L.t("Đang khởi động…", "Starting…")))
         alive = true; running = true; instance = this
         // keep the CPU awake with the screen off so the tunnel does not stall
         wake = getSystemService(PowerManager::class.java)
@@ -83,9 +83,9 @@ class BridgeCore(private val svc: Service) : ContextWrapper(svc), ServiceDelegat
         LogStream.stop()
         try { wake?.release() } catch (_: Throwable) { }
         tunnel = null
-        status = "Đã dừng"; onStatus?.invoke()
+        status = L.t("Đã dừng", "Stopped"); onStatus?.invoke()
         getSystemService(NotificationManager::class.java)?.cancel(NOTIF_ID)
-        Console.info("Cầu nối đã dừng")
+        Console.info(L.t("Cầu nối đã dừng", "Bridge stopped"))
     }
 
     private var keptAlive = false
@@ -103,17 +103,17 @@ class BridgeCore(private val svc: Service) : ContextWrapper(svc), ServiceDelegat
             Adb.run(this, "cmd deviceidle whitelist +$pkg; cmd appops set $pkg RUN_ANY_IN_BACKGROUND allow; " +
                 "cmd appops set $pkg RUN_IN_BACKGROUND allow; am set-standby-bucket $pkg active", 15_000)
         } catch (t: Throwable) { Adb.onCommandError(this, t) }
-        Console.info("Chống bị hệ thống tắt nền: " + if (r.exit == 0) "đã bật" else "lỗi ${r.exit}: ${r.output.take(200)}")
+        Console.info(L.t("Chống bị hệ thống tắt nền: ", "Protection from being killed in the background: ") + if (r.exit == 0) L.t("đã bật", "on") else L.t("lỗi ${r.exit}: ${r.output.take(200)}", "error ${r.exit}: ${r.output.take(200)}"))
     }
 
     private fun tryConnectAdb(cfg: Config) {
         if (Adb.isConnected(this)) { keepAlive(); return }
         // classic TCP port 5555 (no Wi-Fi needed) first, then wireless debugging
         if (cfg.tcpMode && Adb.tcpPortOpen() && Adb.connect(this, "127.0.0.1", Adb.TCP_PORT)) {
-            Console.info("ADB kết nối 127.0.0.1:${Adb.TCP_PORT} (không cần Wi‑Fi)"); return
+            Console.info(L.t("ADB kết nối 127.0.0.1:${Adb.TCP_PORT} (không cần Wi‑Fi)", "ADB connected to 127.0.0.1:${Adb.TCP_PORT} (no Wi‑Fi needed)")); return
         }
         if (!cfg.paired || cfg.adbPort <= 0) return
-        if (Adb.connect(this, cfg.adbHost, cfg.adbPort)) Console.info("ADB kết nối ${cfg.adbHost}:${cfg.adbPort}")
+        if (Adb.connect(this, cfg.adbHost, cfg.adbPort)) Console.info(L.t("ADB kết nối ${cfg.adbHost}:${cfg.adbPort}", "ADB connected to ${cfg.adbHost}:${cfg.adbPort}"))
     }
 
     private fun loop() {
@@ -124,15 +124,15 @@ class BridgeCore(private val svc: Service) : ContextWrapper(svc), ServiceDelegat
         while (alive) {
             try {
                 if (!Adb.isConnected(this)) tryConnectAdb(cfg)
-                val adb = if (Adb.isConnected(this)) "ADB ✓" else "ADB chưa kết nối"
+                val adb = if (Adb.isConnected(this)) "ADB ✓" else L.t("ADB chưa kết nối", "ADB not connected")
                 val t = when (tunnel?.phase) {
-                    Tunnel.Phase.ONLINE -> "Đường hầm ✓"
-                    Tunnel.Phase.RETRYING -> "Đang nối lại đường hầm…"
-                    else -> "Đang mở đường hầm…"
+                    Tunnel.Phase.ONLINE -> L.t("Đường hầm ✓", "Tunnel ✓")
+                    Tunnel.Phase.RETRYING -> L.t("Đang nối lại đường hầm…", "Reconnecting the tunnel…")
+                    else -> L.t("Đang mở đường hầm…", "Opening the tunnel…")
                 }
                 setStatus("$t · $adb")
             } catch (t: Throwable) {
-                Console.err("Lỗi vòng lặp: ${t.message}")
+                Console.err(L.t("Lỗi vòng lặp: ${t.message}", "Loop error: ${t.message}"))
             }
             try { Thread.sleep(3000) } catch (_: InterruptedException) { break }
         }
@@ -143,14 +143,14 @@ class BridgeCore(private val svc: Service) : ContextWrapper(svc), ServiceDelegat
         try {
             server = LocalServer(cfg.httpPort, api::handle).also { it.start() }
         } catch (t: Throwable) {
-            Console.err("Không mở được cổng ${cfg.httpPort}: ${t.message}")
-            setStatus("Lỗi cổng ${cfg.httpPort}")
+            Console.err(L.t("Không mở được cổng ${cfg.httpPort}: ${t.message}", "Cannot open port ${cfg.httpPort}: ${t.message}"))
+            setStatus(L.t("Lỗi cổng ${cfg.httpPort}", "Port ${cfg.httpPort} error"))
             return false
         }
         val p = Pointer(Pointer.DEFAULT_BASE, { cfg.bridgeId }, { cfg.password }) { st ->
             val old = pointer
             pointer = st
-            if (st.ok == true && (old?.ok != true || old.url != st.url)) Console.info("Địa chỉ cố định ${cfg.bridgeId} → ${st.url}")
+            if (st.ok == true && (old?.ok != true || old.url != st.url)) Console.info(L.t("Địa chỉ cố định ${cfg.bridgeId} → ${st.url}", "Fixed address ${cfg.bridgeId} → ${st.url}"))
             else if (st.ok == false && old?.message != st.message) Console.err(st.message)
             onStatus?.invoke()
         }
@@ -160,7 +160,7 @@ class BridgeCore(private val svc: Service) : ContextWrapper(svc), ServiceDelegat
             tunnel = st
             p.set(st.url)
             when {
-                st.phase == Tunnel.Phase.ONLINE && st.url != old?.url -> Console.info("Đường hầm: ${st.url}")
+                st.phase == Tunnel.Phase.ONLINE && st.url != old?.url -> Console.info(L.t("Đường hầm: ${st.url}", "Tunnel: ${st.url}"))
                 st.phase == Tunnel.Phase.RETRYING && st.message != old?.message -> Console.err(st.message)
             }
             onStatus?.invoke()
@@ -177,7 +177,7 @@ class BridgeCore(private val svc: Service) : ContextWrapper(svc), ServiceDelegat
                 val prev = current
                 current = network
                 if (prev != null && prev != network) {
-                    Console.info("Mạng thay đổi – nối lại đường hầm")
+                    Console.info(L.t("Mạng thay đổi – nối lại đường hầm", "Network changed – reconnecting the tunnel"))
                     tun?.kick()
                 }
             }
@@ -194,7 +194,7 @@ class BridgeCore(private val svc: Service) : ContextWrapper(svc), ServiceDelegat
     }
 
     private fun createChannel() {
-        val ch = NotificationChannel(CHANNEL, "Cầu nối ADB", NotificationManager.IMPORTANCE_LOW)
+        val ch = NotificationChannel(CHANNEL, L.t("Cầu nối ADB", "ADB bridge"), NotificationManager.IMPORTANCE_LOW)
         ch.setShowBadge(false)
         getSystemService(NotificationManager::class.java)?.createNotificationChannel(ch)
     }

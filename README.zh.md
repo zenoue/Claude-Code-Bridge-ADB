@@ -14,7 +14,7 @@
 > 本应用为远程 shell 命令打开了一条通往手机的通道，请先阅读[安全](#安全)一节，只在自己的设备上使用，风险自负。
 
 > [!NOTE]
-> 应用界面是越南语。下文中的按钮和标签页名称保留越南语原文，并附中文说明。
+> 应用界面有越南语和英语两种：系统语言为越南语时显示越南语，其他语言（包括中文）显示英语。下文中的按钮和标签页名称使用英语界面的原文，并附中文说明。
 
 ## 它做什么
 
@@ -39,6 +39,7 @@ flowchart LR
 - **固定地址**：隧道地址会自动变化，但你只需向 Claude Code 复制**一次**。
 - **每条命令都用密码签名**（HMAC‑SHA256），密码本身从不经过网络。
 - **功能自动更新**，从 GitHub 下载，不用重装 APK。
+- **两种语言**：手机系统语言为越南语时显示越南语，其他语言一律显示英语。
 
 ## 快速开始
 
@@ -48,9 +49,9 @@ flowchart LR
 |:---:|---|
 | **1** | 在 [**Releases**](https://github.com/zenoue/Claude-Code-Bridge-ADB/releases/latest) 下载 `CCBridgeADB-v1.0.N.apk` 并安装（可以覆盖旧版本）。 |
 | **2** | 打开**无线调试**：设置 → 开发者选项 → 无线调试。需要 Android 11 及以上，并且已连接 Wi‑Fi。 |
-| **3** | 打开应用 → **Connect** 标签页 → *Gỡ lỗi không dây (ADB)* 卡片：**Bước 1 – Ghép nối**（配对：端口 + 6 位配对码，建议分屏，一边看配对码一边输入），然后 **Bước 2 – Kết nối**（连接：输入"IP 地址和端口"一行中的端口，或点 *Tự dò cổng (mDNS)* 自动查找）。 |
-| **4** | 点 **Bắt đầu cầu nối**（启动桥接）。几秒后会显示隧道地址，以及一行"✓ Địa chỉ cố định đã trỏ tới hầm hiện tại"（固定地址已指向当前隧道）。 |
-| **5** | 点 **Sao chép cho Claude Code**（复制给 Claude Code）。 |
+| **3** | 打开应用 → **Connect** 标签页 → *Wireless debugging (ADB)* 卡片：**Step 1 – Pair**（配对：端口 + 6 位配对码，建议分屏，一边看配对码一边输入），然后 **Step 2 – Connect**（连接：输入"IP 地址和端口"一行中的端口，或点 *Find the port (mDNS)* 自动查找）。 |
+| **4** | 点 **Start bridge**（启动桥接）。几秒后会显示隧道地址，以及一行"✓ The fixed address points to the current tunnel"（固定地址已指向当前隧道）。 |
+| **5** | 点 **Copy for Claude Code**（复制给 Claude Code）。 |
 
 ### 2. 在 Claude Code 里
 
@@ -85,7 +86,7 @@ python3 ~/.ccbridge/bridge.py ping   # always ping first
 | 标签页 | 内容 |
 |---|---|
 | **CLI** | 输入 `adb shell` 命令并查看结果。Claude Code 发来的命令也会显示在这里，前缀为 `claude$`，所以你随时能看到 Claude 在做什么。有快捷命令、调出上一条命令、复制和清空日志。输出很长时只显示开头和结尾各 40 行（Claude Code 仍然收到完整输出）。 |
-| **Connect** | **Cầu nối**（桥接）：启动/停止、固定地址、当前隧道地址、*Sao chép cho Claude Code*。<br>**Gỡ lỗi không dây (ADB)**（无线调试）：配对、连接、*Bật ADB không cần Wi‑Fi*（不需要 Wi‑Fi 的 ADB）。<br>**Mật khẩu & chế độ**（密码与模式）：修改密码、更换固定地址、*Cho phép mọi lệnh*（允许所有命令）。<br>**Cập nhật chức năng**（功能更新）：检查、应用、退回 APK 自带的版本。 |
+| **Connect** | **Bridge**（桥接）：启动/停止、固定地址、当前隧道地址、*Copy for Claude Code*。<br>**Wireless debugging (ADB)**（无线调试）：配对、连接、*Enable ADB without Wi‑Fi*（不需要 Wi‑Fi 的 ADB）。<br>**Password & mode**（密码与模式）：修改密码、更换固定地址、*Allow all commands*（允许所有命令）。<br>**Feature updates**（功能更新）：检查、应用、退回 APK 自带的版本。 |
 
 ## `bridge.py` 命令
 
@@ -119,22 +120,22 @@ python3 ~/.ccbridge/bridge.py ping   # always ping first
 |---|---|
 | **密码** | 至少 12 个字符，应用会预先随机生成 24 个字符。它只用来对每条命令和地址记录做 HMAC 签名，**从不通过网络发送**。只知道隧道地址或 `BRIDGE_ID` 而没有密码的人，只能看到一行 `CC Bridge ADB`。 |
 | **防重放** | 时间戳相差超过 5 分钟，或 `nonce` 已被使用过的命令，应用一律拒绝。 |
-| **只读模式** | **默认开启**，对手动输入和远程发来的命令都生效：只允许读取类命令（`dumpsys`、`getprop`、`logcat`、`pm list`……）。需要写入时再打开 *Cho phép mọi lệnh*。 |
+| **只读模式** | **默认开启**，对手动输入和远程发来的命令都生效：只允许读取类命令（`dumpsys`、`getprop`、`logcat`、`pm list`……）。需要写入时再打开 *Allow all commands*。 |
 | **权限** | 命令以 *shell* 权限运行（uid 2000，与 `adb shell` 相同），不是 root。 |
 | **网络** | 应用内的服务器只监听 `127.0.0.1`，不暴露给局域网。 |
 | **透明** | 所有远程命令都会立即显示在 CLI 标签页。 |
 
 > [!CAUTION]
 > localhost.run 会解密 TLS，所以它**能看到命令和输出内容**（但没有密码，无法伪造命令）。不要执行会打印敏感数据的命令。
-> "Sao chép cho Claude Code" 复制的内容**包含密码**，不要粘贴到公开场合。
+> "Copy for Claude Code" 复制的内容**包含密码**，不要粘贴到公开场合。
 
 ## 限制
 
 - **Wi‑Fi**：Android 只在连接 Wi‑Fi 时才启用无线调试（没有互联网的 Wi‑Fi 也可以，上网走移动数据）。
-  没有 Wi‑Fi 时：在 ADB 已连接的情况下点 *Bật ADB không cần Wi‑Fi* → adbd 在手机上打开 `5555` 端口，应用连接
+  没有 Wi‑Fi 时：在 ADB 已连接的情况下点 *Enable ADB without Wi‑Fi* → adbd 在手机上打开 `5555` 端口，应用连接
   `127.0.0.1:5555`。之后关掉 Wi‑Fi 也能用，直到手机重启。第一次手机询问"允许 USB 调试吗？"时点允许。
   使用公共 Wi‑Fi 时应关闭这个端口。
-- **ADB 连接端口会变**：每次开关无线调试或重启手机之后，需要重做第 2 步（Bước 2）。
+- **ADB 连接端口会变**：每次开关无线调试或重启手机之后，需要重做 Step 2。
 - **输出太大可能被隧道截断**（免费隧道限速；回复已用 gzip 压缩）。请用 `| head`、`| tail`、`| grep` 过滤，
   或者先写到手机的 `/data/local/tmp/` 再分段读取。
 - **电量**：桥接开启时，应用运行前台服务并保持手机唤醒。不用时请关闭桥接。
@@ -155,7 +156,7 @@ localhost.run 免费版分配随机域名，每次重连以及每隔几小时都
   `ntfy.sh/<BRIDGE_ID>/json?poll=1&since=all`，取**签名正确**的最新记录，然后重新发送命令。
 - 重发是安全的：每次尝试都带同一个 `nonce`，所以应用绝不会把一条命令执行两次。
 - 只知道 `BRIDGE_ID` 而没有密码的人：无法伪造记录，也无法执行命令（只能读到隧道地址）。
-- 无法发布到 ntfy.sh（网络屏蔽等）时，应用会在 *Cầu nối* 卡片中提示；仍可通过 `BRIDGE_URL` 使用。
+- 无法发布到 ntfy.sh（网络屏蔽等）时，应用会在 *Bridge* 卡片中提示；仍可通过 `BRIDGE_URL` 使用。
 
 </details>
 
@@ -200,9 +201,9 @@ APK（从 Releases 安装一次）               `live` 分支（功能代码变
 ```
 
 - 应用在打开时、启动桥接时以及每 30 分钟检查一次；下载新版本，校验 SHA‑256，并以只读方式保存（Android 14 起强制要求）。
-  点 **Áp dụng ngay**（立即应用；Connect → *Cập nhật chức năng*）重启应用；正在运行的桥接会自动重新启动。
+  点 **Apply now**（立即应用；Connect → *Feature updates*）重启应用；正在运行的桥接会自动重新启动。
 - 界面完全用代码构建（没有 XML，没有 WebView），所以连界面也能通过 `DexClassLoader` 更新。
-- 下载的版本出错时会被标记为损坏，并退回 APK 自带的版本；也有 *Quay về bản đi kèm APK* 按钮。
+- 下载的版本出错时会被标记为损坏，并退回 APK 自带的版本；也有 *Go back to the bundled version* 按钮。
 - 依次尝试 3 个下载源：`raw.githubusercontent.com` → `api.github.com` → `cdn.jsdelivr.net`。每个源的错误都会显示在更新卡片中。
 - 修改 `app/`（manifest、权限、图标、库）或 `api/` 中的 `API_VERSION` 时，**仍然需要安装新的 APK**。
 - 可信度：下载内容与 APK 来自同一个仓库、同一套 CI，经 HTTPS 传输并校验 SHA‑256，与 APK 文件的可信程度相同。
