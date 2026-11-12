@@ -4,7 +4,7 @@ name: Build APK
 # or when started manually. Feature code changes (feature/) are handled by "Live update", without a release.
 on:
   push:
-    branches: [main_1]
+    branches: [main]
     paths:
       - 'app/**'
       - 'api/**'
@@ -19,7 +19,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: release-main_1
+  group: release-main
   cancel-in-progress: false
 
 jobs:
