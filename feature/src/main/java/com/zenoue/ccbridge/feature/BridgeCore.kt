@@ -208,6 +208,7 @@ class BridgeCore(private val svc: Service) : ContextWrapper(svc), ServiceDelegat
             .setSmallIcon(Host.api.notificationIcon)
             .setContentTitle("Claude Code ↔ ADB")
             .setContentText(text)
+            .setColor(0xFFD97757.toInt())
             .setOngoing(true).setOnlyAlertOnce(true).setContentIntent(pi)
             .build()
     }

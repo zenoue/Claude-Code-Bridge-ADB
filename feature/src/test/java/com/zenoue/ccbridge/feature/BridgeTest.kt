@@ -227,3 +227,73 @@ class LanguageTest {
         }
     }
 }
+
+class CdpTest {
+    private fun roundTrip(n: Int) {
+        val payload = ByteArray(n) { (it * 7).toByte() }
+        val f = Wire.frame(Wire.TEXT, payload, byteArrayOf(1, 2, 3, 4))
+        assertNull(Wire.decode(f, f.size - 1))
+        val d = Wire.decode(f + byteArrayOf(9, 9), f.size + 2)!!
+        assertTrue(d.fin)
+        assertEquals(Wire.TEXT, d.opcode)
+        assertEquals(f.size, d.size)
+        assertTrue(payload.contentEquals(d.payload))
+    }
+
+    @Test fun framesRoundTripAtEveryLengthEncoding() { roundTrip(0); roundTrip(125); roundTrip(126); roundTrip(65535); roundTrip(65536) }
+
+    @Test fun decodesAnUnmaskedServerFrame() {
+        val d = Wire.decode(byteArrayOf(0x81.toByte(), 2, 'o'.code.toByte(), 'k'.code.toByte()), 4)!!
+        assertEquals("ok", String(d.payload))
+        assertEquals(4, d.size)
+    }
+
+    @Test fun parsesAnHttpHead() {
+        val raw = "HTTP/1.1 200 OK\r\nContent-Length:12\r\nContent-Type: application/json\r\n\r\n{\"a\":1}".toByteArray()
+        val end = Wire.headEnd(raw, raw.size)
+        val h = Wire.parseHead(String(raw, 0, end))
+        assertEquals(200, h.status)
+        assertEquals("12", h.headers["content-length"])
+        assertEquals("{\"a\":1}", String(raw, end, raw.size - end))
+        assertEquals(-1, Wire.headEnd(raw, 10))
+    }
+
+    @Test fun queueDropsFromTheFront() {
+        val q = ByteQueue()
+        val big = ByteArray(40_000) { it.toByte() }
+        q.add(big, big.size); q.add(byteArrayOf(1, 2, 3), 3)
+        q.drop(40_000)
+        assertEquals(3, q.size)
+        assertEquals(2, q.data[1].toInt())
+    }
+
+    @Test fun largeRepliesAreChunkedWithoutSplittingSurrogates() {
+        val text = "a".repeat(Cdp.CHUNK - 1) + "\uD83D\uDE00" + "b".repeat(Cdp.CHUNK)
+        var r = Cdp.first(text)
+        val sb = StringBuilder(r.output)
+        assertEquals(Cdp.CHUNK - 1, r.output.length)
+        while (r.next != null) { r = Cdp.chunk(r.next!!); assertEquals(0, r.exit); sb.append(r.output) }
+        assertEquals(text, sb.toString())
+        assertNull(Cdp.first("short").next)
+        assertEquals(1, Cdp.chunk(5).exit)
+    }
+
+    @Test fun onlyListingIsAllowedInReadOnlyMode() {
+        assertTrue(Cdp.readOnly("http", "GET", "/json/list"))
+        assertTrue(Cdp.readOnly("sockets", "GET", ""))
+        assertFalse(Cdp.readOnly("http", "PUT", "/json/new?https://example.com"))
+        assertFalse(Cdp.readOnly("http", "GET", "/json/close/AB12"))
+        assertFalse(Cdp.readOnly("call", "GET", "/devtools/page/AB12"))
+    }
+
+    @Test fun rejectsPathsThatCouldSmuggleHeaders() {
+        assertTrue(Cdp.validHttpPath("/json/new?https://example.com/a?b=1&c=%20"))
+        assertFalse(Cdp.validHttpPath("/json/new?x HTTP/1.1\r\nX: y"))
+        assertFalse(Cdp.validHttpPath("/etc/passwd"))
+        assertTrue(Cdp.validWsPath("/devtools/page/8A0E5C1B-2D"))
+        assertFalse(Cdp.validWsPath("/devtools/page/../x"))
+        assertTrue(Cdp.validMethod("Runtime.evaluate"))
+        assertFalse(Cdp.validSocket("a b"))
+    }
+}
+

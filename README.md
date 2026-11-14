@@ -37,6 +37,7 @@ flowchart LR
 - **Địa chỉ cố định**: địa chỉ hầm tự đổi, nhưng bạn chỉ sao chép cho Claude Code **một lần**.
 - **Mỗi lệnh được ký bằng mật khẩu** (HMAC‑SHA256); mật khẩu không bao giờ đi qua mạng.
 - **Tự cập nhật chức năng** từ GitHub, không phải cài lại APK.
+- **Chrome DevTools**: Claude Code xem tab, chạy JavaScript, chụp ảnh trang trong Chrome trên điện thoại.
 - **Hai ngôn ngữ**: giao diện tiếng Việt khi máy để tiếng Việt, tiếng Anh với mọi ngôn ngữ khác.
 
 ## Bắt đầu nhanh
@@ -99,6 +100,7 @@ Chỉ cần Python 3 (thư viện chuẩn). Nếu đã clone repo thì dùng `to
 | `bridge.py stop-logcat` | Dừng luồng logcat trên máy. |
 | `bridge.py url` | In địa chỉ hầm hiện tại. |
 | `bridge.py console` | Nhật ký của chính app (tab CLI): sự kiện đường hầm, ADB. |
+| `bridge.py chrome …` | Chrome DevTools trên điện thoại, xem [bên dưới](#chrome-devtools). |
 | `tools/selftest.py` | Tự kiểm tra toàn bộ kết nối và khả năng ADB (cần clone repo). |
 
 | Exit code | Ý nghĩa |
@@ -112,6 +114,23 @@ Chỉ cần Python 3 (thư viện chuẩn). Nếu đã clone repo thì dùng `to
 | `1` + `[exit -6]` | Lệnh trùng (app đã nhận trước đó, không chạy lại) |
 
 `no reachable tunnel` nghĩa là cầu nối chưa bật trong app, hoặc mạng đang chặn `ntfy.sh` / `*.lhr.life`.
+
+## Chrome DevTools
+
+Chrome (và các app nhân Chromium, WebView có bật gỡ lỗi) mở một cổng DevTools ngay trên máy khi Gỡ lỗi USB/không dây
+đang bật. App nối tới cổng đó qua ADB, giống `chrome://inspect` trên máy tính, nên Claude Code điều khiển được trình duyệt:
+
+| Lệnh | Tác dụng |
+|---|---|
+| `bridge.py chrome tabs` | Liệt kê tab: số thứ tự, id, tiêu đề, địa chỉ. |
+| `bridge.py chrome open https://example.com` | Mở tab mới. |
+| `bridge.py chrome eval 1 "document.title"` | Chạy JavaScript trong tab số 1 và in kết quả. |
+| `bridge.py chrome call 1 Page.reload` | Gọi một lệnh bất kỳ của DevTools Protocol, kèm tham số JSON nếu cần. |
+| `bridge.py chrome screenshot 1 anh.jpg` | Chụp ảnh trang (`.jpg` hoặc `.png`); tab phải đang hiện trên màn hình. |
+| `bridge.py chrome activate 1` / `close 1` | Đưa tab lên trước / đóng tab. |
+| `bridge.py chrome sockets` | Các cổng DevTools đang có trên máy; chọn cổng khác bằng `BRIDGE_CHROME_SOCKET`. |
+
+Ở chế độ chỉ-đọc chỉ dùng được `tabs` và `sockets`; các lệnh còn lại cần bật *Cho phép mọi lệnh*.
 
 ## Bảo mật
 

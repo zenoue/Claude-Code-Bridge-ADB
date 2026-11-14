@@ -34,6 +34,7 @@ object Commands {
                 HttpApi.Reply(if (LogStream.running) 0 else 1, lines.joinToString("") { it + "\n" }, next)
             }
             "exec" -> exec(ctx, cfg, cmd, timeoutMs)
+            "cdp" -> cdp(ctx, cfg, cmd, timeoutMs)
             // the app's own console (CLI tab) - tunnel/ADB events with timestamps, for remote diagnosis
             "console" -> HttpApi.Reply(0, Console.dump())
             else -> HttpApi.Reply(-1, "Unsupported command type: $type")
@@ -49,6 +50,47 @@ object Commands {
         Console.out(r.output.ifBlank { L.t("(không có output)", "(no output)") })
         if (r.exit != 0) Console.err("exit ${r.exit}")
         return HttpApi.Reply(r.exit, r.output)
+    }
+
+    /**
+     * Chrome DevTools on the phone. [cmd] is JSON: {"op":"sockets"} | {"op":"http","method","path"} |
+     * {"op":"call","path":"/devtools/page/<id>","cdp":"Domain.method","params":{}} | {"op":"read","offset"}
+     * plus an optional "socket". Listing tabs is a read; everything else needs "allow all commands".
+     */
+    private fun cdp(ctx: Context, cfg: Config, cmd: String, timeoutMs: Long): HttpApi.Reply {
+        val o = try { org.json.JSONObject(cmd) } catch (_: Exception) { return HttpApi.Reply(-1, "Invalid cdp request (JSON expected).") }
+        val op = o.optString("op")
+        if (op == "read") return Cdp.chunk(o.optLong("offset", -1))
+        val socket = o.optString("socket").ifEmpty { Cdp.DEFAULT_SOCKET }
+        val path = o.optString("path")
+        val method = o.optString("method", "GET").uppercase()
+        val call = o.optString("cdp")
+        val valid = Cdp.validSocket(socket) && when (op) {
+            "sockets" -> true
+            "http" -> method in setOf("GET", "PUT") && Cdp.validHttpPath(path)
+            "call" -> Cdp.validWsPath(path) && Cdp.validMethod(call)
+            else -> false
+        }
+        if (!valid) return HttpApi.Reply(-1, "Invalid cdp request: op=$op path=$path")
+        Console.cmdRemote(when (op) {
+            "sockets" -> "chrome sockets"
+            "http" -> "chrome $method ${path.take(200)}"
+            else -> "chrome $call (${path.substringAfterLast('/').take(8)})"
+        })
+        if (!cfg.allowWrite && !Cdp.readOnly(op, method, path)) return blocked()
+        if (!Adb.isConnected(ctx)) return noAdb()
+        return try {
+            val text = when (op) {
+                "sockets" -> Cdp.sockets(ctx)
+                "http" -> Cdp.http(ctx, socket, method, path, timeoutMs)
+                else -> Cdp.call(ctx, socket, path, call, o.optJSONObject("params") ?: org.json.JSONObject(), timeoutMs)
+            }
+            Console.out(if (text.length > 2000) "(${text.length / 1024} KB)" else text.ifBlank { L.t("(không có output)", "(no output)") })
+            Cdp.first(text)
+        } catch (t: Throwable) {
+            Console.err("Chrome DevTools: ${t.message ?: t}")
+            HttpApi.Reply(1, "Chrome DevTools ($socket): ${t.message ?: t}")
+        }
     }
 
     private fun blocked(): HttpApi.Reply {

@@ -23,6 +23,8 @@ python3 tools/selftest.py                          # tự kiểm tra cầu nối
 - "no reachable tunnel": cầu nối chưa bật trong app, hoặc mạng phiên này chặn `ntfy.sh` / `*.lhr.life`.
 - Không chạy lệnh không tự kết thúc bằng `exec` (vd `logcat` không có `-d`) – dùng `bridge.py logcat`.
 - Mỗi lệnh người dùng thấy ngay trong tab CLI của app (dòng `claude$`).
+- Chrome trên máy: `bridge.py chrome tabs | open URL | eval TAB "js" | call TAB Domain.method '{json}' | screenshot TAB file.jpg`
+  (DevTools Protocol qua ADB, `Cdp.kt`). Chế độ chỉ-đọc chỉ cho `tabs` và `sockets`.
 - Người dùng không clone repo: nút *Sao chép cho Claude Code* chép cả lệnh tải `tools/bridge.py` từ nhánh `main`
   về `~/.ccbridge/bridge.py` lẫn hướng dẫn dùng (`ClaudeSetup.kt`). Đổi cách dùng `bridge.py` thì sửa cả đoạn đó.
 
@@ -32,7 +34,7 @@ python3 tools/selftest.py                          # tự kiểm tra cầu nối
 - **Ngôn ngữ**: toàn bộ code, comment, log gửi về Claude Code, script, workflow viết bằng **tiếng Anh**. Chuỗi
   **hiển thị trên giao diện app** (nhãn, nút, toast, thông báo, dòng trong tab CLI, trạng thái) có hai bản, viết bằng
   `L.t("tiếng Việt", "English")` (`L.kt`): máy để tiếng Việt thì hiện tiếng Việt, ngôn ngữ khác hiện tiếng Anh.
-  Thêm chuỗi giao diện mới thì luôn viết đủ cả hai. Chuỗi trong vỏ `app/` hiện chỉ có tiếng Việt.
+  Thêm chuỗi giao diện mới thì luôn viết đủ cả hai. Vỏ `app/` dùng `Lang.t(...)` theo cùng quy tắc.
   Tiêu đề commit và README/CLAUDE.md viết tiếng Việt (tiêu đề commit hiện trong app ở mục cập nhật).
   README có 3 bản cùng nội dung: `README.md` (tiếng Việt, bản gốc), `README.en.md`, `README.zh.md` – sửa một bản thì sửa cả ba.
 - 3 module:

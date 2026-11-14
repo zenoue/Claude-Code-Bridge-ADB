@@ -15,9 +15,21 @@ Usage:
   bridge.py url                        # print the current tunnel URL
   bridge.py console                    # the app's own log (CLI tab): tunnel / ADB events
 
+Chrome DevTools on the phone (Chrome or any Chromium app / WebView with a DevTools socket):
+  bridge.py chrome tabs                          # open tabs: number, id, title, URL
+  bridge.py chrome open https://example.com      # new tab
+  bridge.py chrome eval 1 "document.title"       # run JavaScript in tab 1, print the result
+  bridge.py chrome call 1 Page.reload            # any DevTools Protocol method, optional JSON params
+  bridge.py chrome screenshot 1 shot.jpg         # .jpg or .png; the tab must be visible on screen
+  bridge.py chrome activate 1 | close 1          # bring a tab to the front | close it
+  bridge.py chrome sockets                       # DevTools sockets on the phone
+  A tab is given by its number in `chrome tabs`, its id (or the start of it), or `browser` (call only).
+  BRIDGE_CHROME_SOCKET picks another socket from `chrome sockets` (default chrome_devtools_remote).
+
 BRIDGE_TIMEOUT (seconds, default 90) = max time per command.
 Python 3 standard library only.
 """
+import base64
 import hashlib
 import http.client
 import hmac
@@ -28,6 +40,7 @@ import secrets
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 BRIDGE_ID = os.environ.get("BRIDGE_ID", "").strip()
@@ -268,6 +281,102 @@ def cmd_logcat(args):
         print("\n(stopped watching)", file=sys.stderr)
 
 
+# ───────── Chrome DevTools ─────────
+
+CHROME_SOCKET = os.environ.get("BRIDGE_CHROME_SOCKET", "").strip()
+
+
+def cdp(req, timeout=None):
+    """One DevTools request through the app; large replies arrive in parts and are joined here."""
+    if CHROME_SOCKET:
+        req = dict(req, socket=CHROME_SOCKET)
+    code, out, nxt = send("cdp", json.dumps(req), timeout)
+    while code == 0 and nxt is not None:
+        code, more, nxt = send("cdp", json.dumps({"op": "read", "offset": nxt}), 30)
+        out += more if code == 0 else ""
+    if code != 0:
+        note = f" ({APP_ERRORS[code]})" if code in APP_ERRORS else ""
+        die(f"{out.strip() or 'chrome request failed'} [exit {code}{note}]")
+    return out
+
+
+def chrome_tabs():
+    return [t for t in json.loads(cdp({"op": "http", "path": "/json/list"}, 30)) if t.get("type") == "page"]
+
+
+def chrome_target(ref):
+    """WebSocket path of a tab given by number, id or id prefix; `browser` is the browser itself."""
+    if ref == "browser":
+        url = json.loads(cdp({"op": "http", "path": "/json/version"}, 30)).get("webSocketDebuggerUrl", "")
+    else:
+        tabs = chrome_tabs()
+        if ref.isdigit() and 1 <= int(ref) <= len(tabs):
+            hit = [tabs[int(ref) - 1]]
+        else:
+            hit = [t for t in tabs if t.get("id", "").lower().startswith(ref.lower())]
+        if len(hit) != 1:
+            die(f"tab '{ref}' not found; run: bridge.py chrome tabs" if not hit else f"'{ref}' matches {len(hit)} tabs")
+        url = hit[0].get("webSocketDebuggerUrl", "")
+    i = url.find("/devtools/")
+    if i < 0:
+        die("this target has no DevTools address (another DevTools client may be attached)")
+    return url[i:]
+
+
+def chrome_call(ref, method, params=None, timeout=None):
+    msg = json.loads(cdp({"op": "call", "path": chrome_target(ref), "cdp": method, "params": params or {}}, timeout))
+    if "error" in msg:
+        die(f"{method}: {msg['error'].get('message', msg['error'])}")
+    return msg.get("result", {})
+
+
+def cmd_chrome(args):
+    sub, rest = (args[0] if args else ""), args[1:]
+
+    def need(n, usage):
+        if len(rest) < n:
+            die(f"usage: bridge.py chrome {usage}")
+
+    if sub == "sockets":
+        print(cdp({"op": "sockets"}, 30))
+    elif sub == "tabs":
+        for n, t in enumerate(chrome_tabs(), 1):
+            print(f"{n}\t{t.get('id', '')}\t{t.get('title', '')}\t{t.get('url', '')}")
+    elif sub == "open":
+        need(1, "open URL")
+        t = json.loads(cdp({"op": "http", "method": "PUT", "path": "/json/new?" + urllib.parse.quote(rest[0], safe=":/?&=#%+,;@~!$*()'[]-._")}, 30))
+        print(f"{t.get('id', '')}\t{t.get('url', '')}")
+    elif sub in ("close", "activate"):
+        need(1, f"{sub} TAB")
+        print(cdp({"op": "http", "path": f"/json/{sub}/" + chrome_target(rest[0]).rsplit("/", 1)[1]}, 30))
+    elif sub == "eval":
+        need(2, 'eval TAB "javascript"')
+        r = chrome_call(rest[0], "Runtime.evaluate", {"expression": " ".join(rest[1:]), "returnByValue": True,
+                                                       "awaitPromise": True, "userGesture": True})
+        if "exceptionDetails" in r:
+            e = r["exceptionDetails"]
+            die(e.get("exception", {}).get("description") or e.get("text", "JavaScript error"))
+        res = r.get("result", {})
+        val = res.get("value", res.get("description", res.get("type", "")))
+        print(val if isinstance(val, str) else json.dumps(val, ensure_ascii=False, indent=1))
+    elif sub == "call":
+        need(2, "call TAB Domain.method ['{\"json\": \"params\"}']")
+        try:
+            params = json.loads(rest[2]) if len(rest) > 2 else {}
+        except ValueError as e:
+            die(f"params are not valid JSON: {e}")
+        print(json.dumps(chrome_call(rest[0], rest[1], params), ensure_ascii=False, indent=1))
+    elif sub == "screenshot":
+        need(2, "screenshot TAB file.jpg|file.png")
+        png = rest[1].lower().endswith(".png")
+        r = chrome_call(rest[0], "Page.captureScreenshot", {"format": "png"} if png else {"format": "jpeg", "quality": 60})
+        with open(rest[1], "wb") as f:
+            f.write(base64.b64decode(r.get("data", "")))
+        print(f"saved {rest[1]} ({os.path.getsize(rest[1])} bytes)")
+    else:
+        die("usage: bridge.py chrome tabs|open|eval|call|screenshot|activate|close|sockets (see bridge.py --help)")
+
+
 def cmd_stop(_):
     print(send("logcat_stop")[1])
 
@@ -283,6 +392,7 @@ def main():
     {
         "exec": cmd_exec, "ping": cmd_ping, "logcat": cmd_logcat,
         "stop-logcat": cmd_stop, "url": cmd_url, "console": cmd_console,
+        "chrome": cmd_chrome,
     }.get(sys.argv[1], lambda _: die(f"unknown command: {sys.argv[1]}"))(sys.argv[2:])
 
 

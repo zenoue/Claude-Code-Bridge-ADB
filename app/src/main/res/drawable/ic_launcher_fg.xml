@@ -1,24 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Suspension bridge: two towers, main cable, hangers, deck and water (inside the 66dp safe zone) -->
+<!-- A spark above a suspension bridge (inside the 66dp safe zone). Original artwork, not a third-party logo. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp" android:height="108dp"
     android:viewportWidth="108" android:viewportHeight="108">
+    <!-- spark: ten rays of alternating length -->
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="3" android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M54.00,34.80L54.00,27.50 M56.47,35.60L59.05,32.04 M57.99,37.70L64.94,35.45 M57.99,40.30L62.18,41.66 M56.47,42.40L60.76,48.30 M54.00,43.20L54.00,47.60 M51.53,42.40L47.24,48.30 M50.01,40.30L45.82,41.66 M50.01,37.70L43.06,35.45 M51.53,35.60L48.95,32.04" />
     <!-- main cable: anchors -> tower tops -> sag at mid-span -->
     <path android:strokeColor="#FFFFFF" android:strokeWidth="2.6" android:strokeLineCap="round"
         android:strokeLineJoin="round" android:fillColor="#00000000"
-        android:pathData="M26,63 Q33,46 38,36 Q54,80 70,36 Q75,46 82,63" />
+        android:pathData="M26,69 Q32,60 37.5,53 Q54,77 70.5,53 Q76,60 82,69" />
     <!-- hangers -->
     <path android:strokeColor="#FFFFFF" android:strokeWidth="1.8" android:strokeLineCap="round"
         android:fillColor="#00000000"
-        android:pathData="M46,52.5V63 M54,58V63 M62,52.5V63 M31.5,52V63 M76.5,52V63" />
+        android:pathData="M45,62.6V69 M54,65.2V69 M63,62.6V69 M30.5,61.5V69 M77.5,61.5V69" />
     <!-- towers -->
     <path android:fillColor="#FFFFFF"
-        android:pathData="M35.5,34h5v40h-5z M67.5,34h5v40h-5z" />
+        android:pathData="M35,51h5v27h-5z M68,51h5v27h-5z" />
     <!-- deck -->
     <path android:fillColor="#FFFFFF"
-        android:pathData="M25,63h58a1.5,1.5 0,0 1,1.5 1.5v2a1.5,1.5 0,0 1,-1.5 1.5h-58a1.5,1.5 0,0 1,-1.5 -1.5v-2a1.5,1.5 0,0 1,1.5 -1.5z" />
-    <!-- water -->
-    <path android:strokeColor="#9FF0D4" android:strokeWidth="2" android:strokeLineCap="round"
-        android:fillColor="#00000000"
-        android:pathData="M32,76q3,-2.5 6,0t6,0t6,0t6,0t6,0t6,0t6,0" />
+        android:pathData="M25.5,69h57a1.5,1.5 0,0 1,1.5 1.5v2a1.5,1.5 0,0 1,-1.5 1.5h-57a1.5,1.5 0,0 1,-1.5 -1.5v-2a1.5,1.5 0,0 1,1.5 -1.5z" />
 </vector>

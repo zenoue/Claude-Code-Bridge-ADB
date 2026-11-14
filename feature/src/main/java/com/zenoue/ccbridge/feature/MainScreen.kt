@@ -62,6 +62,7 @@ class MainScreen(private val activity: Activity) : ContextWrapper(activity), Act
         const val TAB_CLI = 0
         const val TAB_CONNECT = 1
         private const val EMPTY_TAG = "empty"
+        private val VIETNAMESE = Regex("[\u00C0-\u1EF9]")
         private val QUICK = listOf(
             "getprop ro.product.model", "dumpsys battery", "pm list packages -3",
             "df -h", "ip addr show wlan0", "logcat -d -t 100",
@@ -587,11 +588,11 @@ class MainScreen(private val activity: Activity) : ContextWrapper(activity), Act
     }
 
     /**
-     * The update status text comes from the APK shell, which only speaks Vietnamese. In English it is
-     * rebuilt from the state; error details keep the shell's original wording.
+     * The update status text comes from the APK shell. Shells up to v1.0.10 only speak Vietnamese: for
+     * those the English text is rebuilt from the state (error details keep the original wording).
      */
     private fun updateText(u: com.zenoue.ccbridge.api.UpdateInfo): String {
-        if (!L.english) return u.message
+        if (!L.english || !VIETNAMESE.containsMatchIn(u.message)) return u.message
         val v = Regex("#(\\d+)").find(u.message)?.groupValues?.get(1) ?: "?"
         val notes = u.message.substringAfter('\n', "").substringAfter(": ", "")
         return when (u.state) {

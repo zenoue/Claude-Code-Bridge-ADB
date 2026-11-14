@@ -68,6 +68,16 @@ class EndToEndTest {
             ran.add("$type:$cmd")
             when (type) {
                 "ping" -> HttpApi.Reply(0, "pong")
+                "cdp" -> {
+                    val o = org.json.JSONObject(cmd)
+                    when (o.optString("op")) {
+                        "read" -> Cdp.chunk(o.optLong("offset", -1))
+                        // long enough to need three parts
+                        "http" -> Cdp.first("[{\"type\":\"page\",\"id\":\"AB12\",\"title\":\"${"t".repeat(2 * Cdp.CHUNK)}\"," +
+                            "\"url\":\"https://example.com/\",\"webSocketDebuggerUrl\":\"ws://localhost/devtools/page/AB12\"}]")
+                        else -> Cdp.first("{\"id\":1,\"result\":{\"result\":{\"type\":\"string\",\"value\":\"${o.optString("path")} ${o.optString("cdp")}\"}}}")
+                    }
+                }
                 else -> when (cmd) {
                     "fail" -> HttpApi.Reply(7, "nope")
                     "unicode" -> HttpApi.Reply(0, "Tiếng Việt ✓")
@@ -111,7 +121,14 @@ class EndToEndTest {
             assertEquals(big.err, 0, big.exit)
             assertEquals((1..60000).joinToString("\n"), big.out.trimEnd())
 
-            // wrong password: the pointer does not verify and nothing runs
+            // Chrome DevTools: a reply larger than one chunk is fetched in parts and joined by the client
+            val tabs = bridge(env, "chrome", "tabs")
+            assertEquals(tabs.err, 0, tabs.exit)
+            assertEquals("1\tAB12\t${"t".repeat(2 * Cdp.CHUNK)}\thttps://example.com/", tabs.out.trim())
+            val eval = bridge(env, "chrome", "eval", "1", "document.title")
+            assertEquals(eval.err, 0, eval.exit)
+            assertEquals("/devtools/page/AB12 Runtime.evaluate", eval.out.trim())
+
             val before = ran.size
             val bad = bridge(env + ("BRIDGE_PASSWORD" to "wrong-password-000"), "exec", "id")
             assertEquals(1, bad.exit)

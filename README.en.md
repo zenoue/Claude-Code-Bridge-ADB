@@ -40,6 +40,7 @@ flowchart LR
 - **Fixed address**: the tunnel URL changes by itself, but you copy the details to Claude Code only **once**.
 - **Every command is signed with a password** (HMAC‑SHA256); the password never crosses the network.
 - **Features update themselves** from GitHub, without reinstalling the APK.
+- **Chrome DevTools**: Claude Code can list tabs, run JavaScript and take page screenshots in Chrome on the phone.
 - **Two languages**: Vietnamese when the phone is set to Vietnamese, English for every other language.
 
 ## Quick start
@@ -102,6 +103,7 @@ Only Python 3 (standard library) is needed. If you cloned the repository, use `t
 | `bridge.py stop-logcat` | Stops the logcat stream on the phone. |
 | `bridge.py url` | Prints the current tunnel URL. |
 | `bridge.py console` | The app's own log (CLI tab): tunnel and ADB events. |
+| `bridge.py chrome …` | Chrome DevTools on the phone, see [below](#chrome-devtools). |
 | `tools/selftest.py` | Self-test of the whole connection and of what ADB can do (needs a clone). |
 
 | Exit code | Meaning |
@@ -115,6 +117,23 @@ Only Python 3 (standard library) is needed. If you cloned the repository, use `t
 | `1` + `[exit -6]` | Duplicate request (the app already received it and will not run it again) |
 
 `no reachable tunnel` means the bridge is not running in the app, or the network blocks `ntfy.sh` / `*.lhr.life`.
+
+## Chrome DevTools
+
+Chrome (and other Chromium apps, and WebViews with debugging enabled) opens a DevTools socket on the phone while USB or
+wireless debugging is on. The app reaches it through ADB, as `chrome://inspect` on a computer does, so Claude Code can drive the browser:
+
+| Command | What it does |
+|---|---|
+| `bridge.py chrome tabs` | Lists tabs: number, id, title, URL. |
+| `bridge.py chrome open https://example.com` | Opens a new tab. |
+| `bridge.py chrome eval 1 "document.title"` | Runs JavaScript in tab 1 and prints the result. |
+| `bridge.py chrome call 1 Page.reload` | Calls any DevTools Protocol method, with optional JSON parameters. |
+| `bridge.py chrome screenshot 1 shot.jpg` | Takes a page screenshot (`.jpg` or `.png`); the tab must be visible on screen. |
+| `bridge.py chrome activate 1` / `close 1` | Brings a tab to the front / closes it. |
+| `bridge.py chrome sockets` | DevTools sockets on the phone; pick another one with `BRIDGE_CHROME_SOCKET`. |
+
+In read-only mode only `tabs` and `sockets` work; the rest needs *Allow all commands*.
 
 ## Security
 

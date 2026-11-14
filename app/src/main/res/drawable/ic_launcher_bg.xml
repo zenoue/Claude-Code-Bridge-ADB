@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- background: dark teal to green gradient -->
+<!-- background: terracotta gradient -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
-    <gradient android:angle="270" android:startColor="#14524A" android:endColor="#1E8A6A" />
+    <gradient android:angle="270" android:startColor="#DE7F5F" android:endColor="#C96442" />
 </shape>

@@ -39,6 +39,7 @@ flowchart LR
 - **固定地址**：隧道地址会自动变化，但你只需向 Claude Code 复制**一次**。
 - **每条命令都用密码签名**（HMAC‑SHA256），密码本身从不经过网络。
 - **功能自动更新**，从 GitHub 下载，不用重装 APK。
+- **Chrome DevTools**：Claude Code 可以查看手机 Chrome 的标签页、执行 JavaScript、对页面截图。
 - **两种语言**：手机系统语言为越南语时显示越南语，其他语言一律显示英语。
 
 ## 快速开始
@@ -100,6 +101,7 @@ python3 ~/.ccbridge/bridge.py ping   # always ping first
 | `bridge.py stop-logcat` | 停止手机上的 logcat 流。 |
 | `bridge.py url` | 打印当前隧道地址。 |
 | `bridge.py console` | 应用自身的日志（CLI 标签页）：隧道和 ADB 事件。 |
+| `bridge.py chrome …` | 手机上的 Chrome DevTools，见[下文](#chrome-devtools)。 |
 | `tools/selftest.py` | 对整个连接和 ADB 能力做自检（需要克隆仓库）。 |
 
 | 退出码 | 含义 |
@@ -113,6 +115,23 @@ python3 ~/.ccbridge/bridge.py ping   # always ping first
 | `1` + `[exit -6]` | 重复请求（应用已收到过，不会再次执行） |
 
 `no reachable tunnel` 表示应用里的桥接没有启动，或者当前网络屏蔽了 `ntfy.sh` / `*.lhr.life`。
+
+## Chrome DevTools
+
+在 USB 调试或无线调试开启时，Chrome（以及其他 Chromium 内核应用、开启了调试的 WebView）会在手机上打开一个 DevTools 套接字。
+应用通过 ADB 连接它，和电脑上的 `chrome://inspect` 一样，所以 Claude Code 可以操作浏览器：
+
+| 命令 | 作用 |
+|---|---|
+| `bridge.py chrome tabs` | 列出标签页：序号、id、标题、网址。 |
+| `bridge.py chrome open https://example.com` | 打开新标签页。 |
+| `bridge.py chrome eval 1 "document.title"` | 在第 1 个标签页中执行 JavaScript 并打印结果。 |
+| `bridge.py chrome call 1 Page.reload` | 调用任意 DevTools Protocol 方法，可附带 JSON 参数。 |
+| `bridge.py chrome screenshot 1 shot.jpg` | 对页面截图（`.jpg` 或 `.png`）；该标签页必须正显示在屏幕上。 |
+| `bridge.py chrome activate 1` / `close 1` | 把标签页切到前台 / 关闭标签页。 |
+| `bridge.py chrome sockets` | 手机上现有的 DevTools 套接字；用 `BRIDGE_CHROME_SOCKET` 选择其他套接字。 |
+
+只读模式下只能使用 `tabs` 和 `sockets`；其余命令需要打开 *Allow all commands*。
 
 ## 安全
 

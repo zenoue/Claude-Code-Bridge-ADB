@@ -31,6 +31,8 @@ object ClaudeSetup {
             append("#   $run exec \"dumpsys battery\"      # exit code = exit code on the phone\n")
             append("#   $run logcat \"logcat -v time\"     # for commands that never end; stop: stop-logcat\n")
             append("#   $run console                     # the app's own log (tunnel / ADB events)\n")
+            append("#   $run chrome tabs                 # Chrome DevTools on the phone: tabs, then\n")
+            append("#   $run chrome eval 1 \"document.title\"   #   eval / call / open / screenshot (see --help)\n")
             append("#   $run --help                      # everything else\n")
             append("# Notes:\n")
             append("#   - Errors from the app exit 1: -2 wrong password, -3 blocked (read-only mode is on in the app),\n")

@@ -155,6 +155,9 @@ object Adb {
         return false
     }
 
+    /** Open a raw adbd service, e.g. `localabstract:chrome_devtools_remote`. */
+    fun open(ctx: Context, service: String): AdbStream = AdbManager.get(ctx).openStream(service)
+
     /** Open `adb shell <cmd>` and return the stream for incremental reading (logcat). The command is wrapped ([wrap]). */
     fun openShell(ctx: Context, cmd: String): AdbStream =
         AdbManager.get(ctx).openStream("shell:" + wrap(cmd))

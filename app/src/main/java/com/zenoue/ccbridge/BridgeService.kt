@@ -41,9 +41,9 @@ class BridgeService : Service() {
 
     private fun foregroundThenStop() {
         val nm = getSystemService(NotificationManager::class.java)
-        nm?.createNotificationChannel(NotificationChannel("bridge", "Cầu nối ADB", NotificationManager.IMPORTANCE_LOW))
+        nm?.createNotificationChannel(NotificationChannel("bridge", Lang.t("Cầu nối ADB", "ADB bridge"), NotificationManager.IMPORTANCE_LOW))
         val n = Notification.Builder(this, "bridge").setSmallIcon(R.drawable.ic_stat)
-            .setContentTitle("Claude Code ↔ ADB").setContentText("Chức năng lỗi – mở app để xử lý").build()
+            .setContentTitle("Claude Code ↔ ADB").setContentText(Lang.t("Chức năng lỗi – mở app để xử lý", "The feature failed – open the app to fix it")).build()
         if (Build.VERSION.SDK_INT >= 34) startForeground(11, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         else startForeground(11, n)
         stopSelf()

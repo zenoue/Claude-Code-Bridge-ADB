@@ -12,7 +12,7 @@ import com.zenoue.ccbridge.api.ActivityDelegate
 
 /**
  * Activity shell: forwards the lifecycle to the feature (MainScreen inside feature.dex).
- * If the feature fails, a minimal fallback screen (UI text, Vietnamese) lets the user go back to the
+ * If the feature fails, a minimal fallback screen (UI text, see [Lang]) lets the user go back to the
  * version bundled with the APK.
  */
 class MainActivity : Activity() {
@@ -48,19 +48,19 @@ class MainActivity : Activity() {
     private fun fallback(t: Throwable) {
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(40, 60, 40, 40) }
         col.addView(TextView(this).apply {
-            text = "Chức năng bị lỗi"; textSize = 20f; typeface = Typeface.DEFAULT_BOLD
+            text = Lang.t("Chức năng bị lỗi", "The feature failed"); textSize = 20f; typeface = Typeface.DEFAULT_BOLD
         })
         col.addView(TextView(this).apply {
-            text = "Chức năng #${FeatureHost.featureVersion} (${FeatureHost.featureSource}) gặp lỗi:\n\n" +
+            text = Lang.t("Chức năng #${FeatureHost.featureVersion} (${FeatureHost.featureSource}) gặp lỗi:\n\n", "Feature #${FeatureHost.featureVersion} (${FeatureHost.featureSource}) failed:\n\n") +
                 t.stackTraceToString().take(2500)
             textSize = 12f; typeface = Typeface.MONOSPACE; setTextIsSelectable(true)
         })
         col.addView(Button(this).apply {
-            text = "Dùng bản đi kèm APK và khởi động lại"; isAllCaps = false
+            text = Lang.t("Dùng bản đi kèm APK và khởi động lại", "Use the bundled version and restart"); isAllCaps = false
             setOnClickListener { FeatureHost.resetToBundled(); FeatureHost.applyUpdate(false) }
         })
         col.addView(Button(this).apply {
-            text = "Tải bản mới từ GitHub"; isAllCaps = false
+            text = Lang.t("Tải bản mới từ GitHub", "Download a new version from GitHub"); isAllCaps = false
             setOnClickListener {
                 FeatureHost.setUpdateListener {
                     runOnUiThread {

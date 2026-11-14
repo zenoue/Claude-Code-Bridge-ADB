@@ -17,18 +17,19 @@ import android.widget.TextView
 class Palette(ctx: Context) {
     val dark = (ctx.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
         Configuration.UI_MODE_NIGHT_YES
-    val bg = if (dark) 0xFF0F1412.toInt() else 0xFFF3F6F4.toInt()
-    val card = if (dark) 0xFF1A211E.toInt() else 0xFFFFFFFF.toInt()
-    val text = if (dark) 0xFFE7EDEA.toInt() else 0xFF15201C.toInt()
-    val muted = if (dark) 0xFF93A29C.toInt() else 0xFF5B6A64.toInt()
-    val accent = if (dark) 0xFF66D6B4.toInt() else 0xFF17795B.toInt()
-    val onAccent = if (dark) 0xFF06211A.toInt() else 0xFFFFFFFF.toInt()
-    val warn = if (dark) 0xFFF2B35A.toInt() else 0xFFA85B00.toInt()
+    // warm neutrals with a terracotta accent
+    val bg = if (dark) 0xFF1A1917.toInt() else 0xFFF5F4EE.toInt()
+    val card = if (dark) 0xFF262522.toInt() else 0xFFFFFFFF.toInt()
+    val text = if (dark) 0xFFEDEBE4.toInt() else 0xFF1F1E1D.toInt()
+    val muted = if (dark) 0xFFA19E94.toInt() else 0xFF6B6860.toInt()
+    val accent = if (dark) 0xFFE08A6B.toInt() else 0xFFC15F3C.toInt()
+    val onAccent = if (dark) 0xFF2A130A.toInt() else 0xFFFFFFFF.toInt()
+    val warn = if (dark) 0xFFF2B35A.toInt() else 0xFF9A6700.toInt()
     val bad = if (dark) 0xFFFF8A80.toInt() else 0xFFC62828.toInt()
-    val field = if (dark) 0xFF101714.toInt() else 0xFFEFF3F1.toInt()
-    val line = if (dark) 0xFF2A322E.toInt() else 0xFFDFE6E2.toInt()
+    val field = if (dark) 0xFF1F1E1B.toInt() else 0xFFEFEDE5.toInt()
+    val line = if (dark) 0xFF36342F.toInt() else 0xFFE3E0D5.toInt()
     val series2 = if (dark) 0xFF8AB4F8.toInt() else 0xFF2F5FB3.toInt()
-    val term = if (dark) 0xFF0A0E0C.toInt() else 0xFFFAFCFB.toInt()
+    val term = if (dark) 0xFF121110.toInt() else 0xFFFBFAF6.toInt()
 }
 
 fun Context.dp(v: Int): Int =

@@ -38,7 +38,7 @@ import javax.net.ssl.TrustManagerFactory
  *    marked bad and the bundled copy is used again.
  *  - Loaded classes cannot be unloaded -> applying a new version means restarting the app ([applyUpdate]).
  *
- * Status messages passed to [publish] are shown in the UI, hence Vietnamese.
+ * Status messages passed to [publish] are shown in the UI (Vietnamese or English, see [Lang]).
  */
 object FeatureHost : HostApi {
     private const val CHECK_EVERY_MS = 30 * 60_000L
@@ -51,7 +51,7 @@ object FeatureHost : HostApi {
     private val dir: File get() = File(application.filesDir, "feature").apply { mkdirs() }
 
     @Volatile private var entryRef: FeatureEntry? = null
-    @Volatile private var info = UpdateInfo("idle", "Chưa kiểm tra cập nhật", 0, 0)
+    @Volatile private var info = UpdateInfo("idle", Lang.t("Chưa kiểm tra cập nhật", "Not checked for updates yet"), 0, 0)
     @Volatile private var listener: Runnable? = null
     private val checking = AtomicBoolean(false)
     @Volatile var lastFailure: Throwable? = null; private set
@@ -175,17 +175,17 @@ object FeatureHost : HostApi {
         if (dl > featureVersion && downloaded() != null) {
             publish("downloaded", downloadedMessage(dl), dl)
         } else if (prefs.getString("bad_reason", null) != null && featureSource == "bundled" && dl > featureVersion) {
-            publish("error", "Bản tải về bị lỗi, đang dùng bản đi kèm (${prefs.getString("bad_reason", "")})", 0)
+            publish("error", Lang.t("Bản tải về bị lỗi, đang dùng bản đi kèm (${prefs.getString("bad_reason", "")})", "The downloaded version failed; using the bundled one (${prefs.getString("bad_reason", "")})"), 0)
         }
     }
 
     override fun checkUpdate(force: Boolean) {
         if (!force && System.currentTimeMillis() - info.checkedAt < MIN_CHECK_GAP_MS) return
         if (!checking.compareAndSet(false, true)) return
-        publish("checking", "Đang kiểm tra GitHub…")
+        publish("checking", Lang.t("Đang kiểm tra GitHub…", "Checking GitHub…"))
         Thread {
             try { doCheck() } catch (t: Throwable) {
-                publish("error", "Không kiểm tra được: ${t.message ?: t}", checkedAt = System.currentTimeMillis())
+                publish("error", Lang.t("Không kiểm tra được: ${t.message ?: t}", "Could not check: ${t.message ?: t}"), checkedAt = System.currentTimeMillis())
             } finally { checking.set(false) }
         }.apply { isDaemon = true; name = "feature-check"; start() }
     }
@@ -198,14 +198,14 @@ object FeatureHost : HostApi {
         val have = maxOf(featureVersion, prefs.getInt("dl_version", 0).takeIf { downloaded() != null } ?: 0)
         when {
             api > API_VERSION -> publish("need_apk",
-                "Có chức năng #$v nhưng cần APK mới (API $api, APK đang là API $API_VERSION) – tải APK ở Releases", checkedAt = now)
+                Lang.t("Có chức năng #$v nhưng cần APK mới (API $api, APK đang là API $API_VERSION) – tải APK ở Releases", "Feature #$v needs a new APK (API $api, this APK is API $API_VERSION) – download the APK from Releases"), checkedAt = now)
             // live copy targets an older API than this APK -> unusable; the bundled copy is newer anyway
-            api < API_VERSION -> publish("uptodate", "Đang dùng bản mới nhất (#$featureVersion)", checkedAt = now)
+            api < API_VERSION -> publish("uptodate", Lang.t("Đang dùng bản mới nhất (#$featureVersion)", "Up to date (#$featureVersion)"), checkedAt = now)
             v <= have -> if (info.pending > 0) publish("downloaded", info.message, checkedAt = now)
-                else publish("uptodate", "Đang dùng bản mới nhất (#$featureVersion)", checkedAt = now)
-            isBad(v) -> publish("error", "Bản #$v bị lỗi trước đó – bỏ qua, chờ bản sau", checkedAt = now)
+                else publish("uptodate", Lang.t("Đang dùng bản mới nhất (#$featureVersion)", "Up to date (#$featureVersion)"), checkedAt = now)
+            isBad(v) -> publish("error", Lang.t("Bản #$v bị lỗi trước đó – bỏ qua, chờ bản sau", "Version #$v failed before – skipped, waiting for the next one"), checkedAt = now)
             else -> {
-                publish("checking", "Đang tải chức năng #$v…")
+                publish("checking", Lang.t("Đang tải chức năng #$v…", "Downloading feature #$v…"))
                 val file = meta.optString("file", "feature-$v.dex")
                 if (!Regex("[A-Za-z0-9._-]+").matches(file)) throw IllegalStateException("invalid file name: $file")
                 val bytes = fetch(file, MAX_DEX)
@@ -226,7 +226,7 @@ object FeatureHost : HostApi {
 
     private fun downloadedMessage(v: Int): String {
         val notes = prefs.getString("dl_notes", "").orEmpty()
-        return "Đã tải chức năng #$v – khởi động lại để dùng" + if (notes.isNotBlank()) "\nMới: $notes" else ""
+        return Lang.t("Đã tải chức năng #$v – khởi động lại để dùng", "Feature #$v downloaded – restart to use it") + if (notes.isNotBlank()) Lang.t("\nMới: $notes", "\nNew: $notes") else ""
     }
 
     override fun applyUpdate(restartService: Boolean) {
@@ -242,7 +242,7 @@ object FeatureHost : HostApi {
     override fun resetToBundled() {
         if (featureSource == "github") prefs.edit().putBoolean("bad_$featureVersion", true).commit()
         prefs.edit().remove("dl_version").remove("dl_sha").remove("dl_api").commit()
-        publish("downloaded", "Sẽ dùng bản đi kèm APK sau khi khởi động lại", -1)
+        publish("downloaded", Lang.t("Sẽ dùng bản đi kèm APK sau khi khởi động lại", "The version bundled with the APK will be used after a restart"), -1)
     }
 
     // ───────── helpers ─────────
