@@ -126,14 +126,17 @@ wireless debugging is on. The app reaches it through ADB, as `chrome://inspect` 
 | Command | What it does |
 |---|---|
 | `bridge.py chrome tabs` | Lists tabs: number, id, title, URL. |
-| `bridge.py chrome open https://example.com` | Opens a new tab. |
+| `bridge.py chrome open https://example.com` | Opens a new tab and prints its id. |
 | `bridge.py chrome eval 1 "document.title"` | Runs JavaScript in tab 1 and prints the result. |
 | `bridge.py chrome call 1 Page.reload` | Calls any DevTools Protocol method, with optional JSON parameters. |
 | `bridge.py chrome screenshot 1 shot.jpg` | Takes a page screenshot (`.jpg` or `.png`); the tab must be visible on screen. |
 | `bridge.py chrome activate 1` / `close 1` | Brings a tab to the front / closes it. |
 | `bridge.py chrome sockets` | DevTools sockets on the phone; pick another one with `BRIDGE_CHROME_SOCKET`. |
 
-In read-only mode only `tabs` and `sockets` work; the rest needs *Allow all commands*.
+- The browser must be on screen: Android freezes background apps, so the DevTools socket stops answering. For Chrome,
+  `bridge.py` opens it on the phone and tries again.
+- In read-only mode only `tabs` and `sockets` work; the rest needs *Allow all commands*.
+- Large results (screenshots, a whole page's HTML) are sent through the tunnel in parts and can take about a minute.
 
 ## Security
 

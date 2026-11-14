@@ -123,14 +123,17 @@ Chrome (và các app nhân Chromium, WebView có bật gỡ lỗi) mở một c�
 | Lệnh | Tác dụng |
 |---|---|
 | `bridge.py chrome tabs` | Liệt kê tab: số thứ tự, id, tiêu đề, địa chỉ. |
-| `bridge.py chrome open https://example.com` | Mở tab mới. |
+| `bridge.py chrome open https://example.com` | Mở tab mới, in ra id của tab. |
 | `bridge.py chrome eval 1 "document.title"` | Chạy JavaScript trong tab số 1 và in kết quả. |
 | `bridge.py chrome call 1 Page.reload` | Gọi một lệnh bất kỳ của DevTools Protocol, kèm tham số JSON nếu cần. |
 | `bridge.py chrome screenshot 1 anh.jpg` | Chụp ảnh trang (`.jpg` hoặc `.png`); tab phải đang hiện trên màn hình. |
 | `bridge.py chrome activate 1` / `close 1` | Đưa tab lên trước / đóng tab. |
 | `bridge.py chrome sockets` | Các cổng DevTools đang có trên máy; chọn cổng khác bằng `BRIDGE_CHROME_SOCKET`. |
 
-Ở chế độ chỉ-đọc chỉ dùng được `tabs` và `sockets`; các lệnh còn lại cần bật *Cho phép mọi lệnh*.
+- Trình duyệt phải đang mở trên màn hình: Android đóng băng app chạy nền nên cổng DevTools không trả lời. Với Chrome,
+  `bridge.py` tự mở Chrome lên rồi thử lại.
+- Ở chế độ chỉ-đọc chỉ dùng được `tabs` và `sockets`; các lệnh còn lại cần bật *Cho phép mọi lệnh*.
+- Kết quả lớn (ảnh chụp, HTML cả trang) được chia nhỏ để qua hầm nên có thể mất khoảng một phút.
 
 ## Bảo mật
 

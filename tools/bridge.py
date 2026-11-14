@@ -17,13 +17,14 @@ Usage:
 
 Chrome DevTools on the phone (Chrome or any Chromium app / WebView with a DevTools socket):
   bridge.py chrome tabs                          # open tabs: number, id, title, URL
-  bridge.py chrome open https://example.com      # new tab
+  bridge.py chrome open https://example.com      # new tab, prints its id
   bridge.py chrome eval 1 "document.title"       # run JavaScript in tab 1, print the result
   bridge.py chrome call 1 Page.reload            # any DevTools Protocol method, optional JSON params
   bridge.py chrome screenshot 1 shot.jpg         # .jpg or .png; the tab must be visible on screen
   bridge.py chrome activate 1 | close 1          # bring a tab to the front | close it
   bridge.py chrome sockets                       # DevTools sockets on the phone
   A tab is given by its number in `chrome tabs`, its id (or the start of it), or `browser` (call only).
+  The browser must be on screen: Android freezes it in the background (Chrome is opened automatically).
   BRIDGE_CHROME_SOCKET picks another socket from `chrome sockets` (default chrome_devtools_remote).
 
 BRIDGE_TIMEOUT (seconds, default 90) = max time per command.
@@ -40,7 +41,6 @@ import secrets
 import sys
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 
 BRIDGE_ID = os.environ.get("BRIDGE_ID", "").strip()
@@ -286,11 +286,21 @@ def cmd_logcat(args):
 CHROME_SOCKET = os.environ.get("BRIDGE_CHROME_SOCKET", "").strip()
 
 
+CHROME_START = "am start -n com.android.chrome/com.google.android.apps.chrome.Main"
+
+
 def cdp(req, timeout=None):
     """One DevTools request through the app; large replies arrive in parts and are joined here."""
     if CHROME_SOCKET:
         req = dict(req, socket=CHROME_SOCKET)
-    code, out, nxt = send("cdp", json.dumps(req), timeout)
+    # Android freezes a browser in the background: its DevTools socket accepts but never answers.
+    # Probe with a short timeout first; for Chrome, bring it to the front once and try again.
+    code, out, nxt = send("cdp", json.dumps(req), 15 if req.get("op") == "http" else timeout)
+    if code == 1 and "no answer from the browser" in out and not CHROME_SOCKET:
+        print("(Chrome is in the background - opening it on the phone)", file=sys.stderr)
+        if send("exec", CHROME_START, 20)[0] == 0:
+            time.sleep(1.5)
+            code, out, nxt = send("cdp", json.dumps(req), timeout)
     while code == 0 and nxt is not None:
         code, more, nxt = send("cdp", json.dumps({"op": "read", "offset": nxt}), 30)
         out += more if code == 0 else ""
@@ -306,6 +316,8 @@ def chrome_tabs():
 
 def chrome_target(ref):
     """WebSocket path of a tab given by number, id or id prefix; `browser` is the browser itself."""
+    if not ref:
+        die("missing tab; run: bridge.py chrome tabs")
     if ref == "browser":
         url = json.loads(cdp({"op": "http", "path": "/json/version"}, 30)).get("webSocketDebuggerUrl", "")
     else:
@@ -344,8 +356,8 @@ def cmd_chrome(args):
             print(f"{n}\t{t.get('id', '')}\t{t.get('title', '')}\t{t.get('url', '')}")
     elif sub == "open":
         need(1, "open URL")
-        t = json.loads(cdp({"op": "http", "method": "PUT", "path": "/json/new?" + urllib.parse.quote(rest[0], safe=":/?&=#%+,;@~!$*()'[]-._")}, 30))
-        print(f"{t.get('id', '')}\t{t.get('url', '')}")
+        # Chrome on Android has no /json/new; a new tab is created through the browser target
+        print(chrome_call("browser", "Target.createTarget", {"url": rest[0]}).get("targetId", ""))
     elif sub in ("close", "activate"):
         need(1, f"{sub} TAB")
         print(cdp({"op": "http", "path": f"/json/{sub}/" + chrome_target(rest[0]).rsplit("/", 1)[1]}, 30))

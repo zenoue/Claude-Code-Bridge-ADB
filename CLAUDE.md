@@ -24,7 +24,8 @@ python3 tools/selftest.py                          # tự kiểm tra cầu nối
 - Không chạy lệnh không tự kết thúc bằng `exec` (vd `logcat` không có `-d`) – dùng `bridge.py logcat`.
 - Mỗi lệnh người dùng thấy ngay trong tab CLI của app (dòng `claude$`).
 - Chrome trên máy: `bridge.py chrome tabs | open URL | eval TAB "js" | call TAB Domain.method '{json}' | screenshot TAB file.jpg`
-  (DevTools Protocol qua ADB, `Cdp.kt`). Chế độ chỉ-đọc chỉ cho `tabs` và `sockets`.
+  (DevTools Protocol qua ADB, `Cdp.kt`). Chế độ chỉ-đọc chỉ cho `tabs` và `sockets`. Trình duyệt phải đang hiện trên
+  màn hình (chạy nền bị Android đóng băng, cổng DevTools không trả lời); với Chrome `bridge.py` tự mở lên.
 - Người dùng không clone repo: nút *Sao chép cho Claude Code* chép cả lệnh tải `tools/bridge.py` từ nhánh `main`
   về `~/.ccbridge/bridge.py` lẫn hướng dẫn dùng (`ClaudeSetup.kt`). Đổi cách dùng `bridge.py` thì sửa cả đoạn đó.
 

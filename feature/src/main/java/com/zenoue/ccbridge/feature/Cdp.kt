@@ -125,10 +125,13 @@ class ByteQueue {
 object Cdp {
     const val DEFAULT_SOCKET = "chrome_devtools_remote"
     const val CHUNK = 48_000
+    /** tools/bridge.py looks for this text to bring the browser to the front and retry. */
+    const val NO_ANSWER = "no answer from the browser (it is probably in the background; open it on the phone)"
 
     private val SOCKET = Regex("[A-Za-z0-9_.:-]{1,120}")
     private val HTTP_PATH = Regex("/json(/[a-z]+(/[A-Za-z0-9-]+)?)?(\\?[\\x21-\\x7E]*)?")
-    private val WS_PATH = Regex("/devtools/(page|browser)/[A-Za-z0-9-]+")
+    // Chrome on Android serves the browser target at plain /devtools/browser (no id)
+    private val WS_PATH = Regex("/devtools/(page/[A-Za-z0-9-]+|browser(/[A-Za-z0-9-]+)?)")
     private val METHOD = Regex("[A-Za-z]+\\.[A-Za-z]+")
     /** Endpoints that only read; everything else needs "allow all commands". */
     private val READ_ONLY_PATHS = setOf("/json", "/json/list", "/json/version")
@@ -165,7 +168,8 @@ object Cdp {
                 }
                 if (head != null && need >= 0 && q.size - bodyAt >= need) done = true
             }
-            val h = head ?: throw IOException("no HTTP response from $socket")
+            // a browser in the background is frozen by Android: the socket accepts, nothing answers
+            val h = head ?: throw IOException(if (eof) "connection closed by $socket" else NO_ANSWER)
             if (!done && !eof) throw IOException("timed out reading $path")
             val len = if (need >= 0) minOf(need, q.size - bodyAt) else q.size - bodyAt
             val body = String(q.data, bodyAt, len, Charsets.UTF_8)
@@ -224,9 +228,11 @@ object Cdp {
                 }
             }
             error?.let { throw IOException(it) }
-            return result ?: throw IOException(
-                if (eof) "DevTools connection closed before the reply" else "timed out waiting for $method"
-            )
+            return result ?: throw IOException(when {
+                eof -> "DevTools connection closed before the reply"
+                !upgraded -> NO_ANSWER
+                else -> "timed out waiting for $method"
+            })
         } finally {
             try { st.close() } catch (_: Throwable) { }
         }

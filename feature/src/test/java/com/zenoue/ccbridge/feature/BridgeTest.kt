@@ -292,6 +292,9 @@ class CdpTest {
         assertFalse(Cdp.validHttpPath("/etc/passwd"))
         assertTrue(Cdp.validWsPath("/devtools/page/8A0E5C1B-2D"))
         assertFalse(Cdp.validWsPath("/devtools/page/../x"))
+        assertTrue(Cdp.validWsPath("/devtools/browser"))
+        assertTrue(Cdp.validWsPath("/devtools/browser/8a0e-5c1b"))
+        assertFalse(Cdp.validWsPath("/devtools/page"))
         assertTrue(Cdp.validMethod("Runtime.evaluate"))
         assertFalse(Cdp.validSocket("a b"))
     }

@@ -124,14 +124,16 @@ python3 ~/.ccbridge/bridge.py ping   # always ping first
 | 命令 | 作用 |
 |---|---|
 | `bridge.py chrome tabs` | 列出标签页：序号、id、标题、网址。 |
-| `bridge.py chrome open https://example.com` | 打开新标签页。 |
+| `bridge.py chrome open https://example.com` | 打开新标签页并打印其 id。 |
 | `bridge.py chrome eval 1 "document.title"` | 在第 1 个标签页中执行 JavaScript 并打印结果。 |
 | `bridge.py chrome call 1 Page.reload` | 调用任意 DevTools Protocol 方法，可附带 JSON 参数。 |
 | `bridge.py chrome screenshot 1 shot.jpg` | 对页面截图（`.jpg` 或 `.png`）；该标签页必须正显示在屏幕上。 |
 | `bridge.py chrome activate 1` / `close 1` | 把标签页切到前台 / 关闭标签页。 |
 | `bridge.py chrome sockets` | 手机上现有的 DevTools 套接字；用 `BRIDGE_CHROME_SOCKET` 选择其他套接字。 |
 
-只读模式下只能使用 `tabs` 和 `sockets`；其余命令需要打开 *Allow all commands*。
+- 浏览器必须正显示在屏幕上：Android 会冻结后台应用，DevTools 套接字就不再响应。对于 Chrome，`bridge.py` 会自动在手机上打开它并重试。
+- 只读模式下只能使用 `tabs` 和 `sockets`；其余命令需要打开 *Allow all commands*。
+- 较大的结果（截图、整页 HTML）会分段通过隧道传输，可能需要一分钟左右。
 
 ## 安全
 
